@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Desert Command</title>
+<link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div class="stamp">MOST SECRET</div>
+      <h1>Desert Command</h1>
+      <p class="sub">The Western Desert, 1940–43 · Two staffs of five · One host</p>
+    </header>
+
+    <section class="cards">
+      <form id="hostForm" class="card">
+        <h2>Host a campaign</h2>
+        <p>Runs the game on this machine and creates a link your friends can join from anywhere.</p>
+        <label>Campaign name
+          <input id="campaign" value="Operation Compass" maxlength="40" required>
+        </label>
+        <div id="saves"></div>
+        <label class="check"><input type="checkbox" id="tunnel" checked> Create a Cloudflare link for online players</label>
+        <button type="submit">Start hosting</button>
+        <div id="hostStatus" class="status"></div>
+      </form>
+
+      <form id="joinForm" class="card">
+        <h2>Join a campaign</h2>
+        <p>Paste the link the host sent you. It looks like <code>https://something.trycloudflare.com</code>.</p>
+        <label>Invite link
+          <input id="joinUrl" placeholder="https://….trycloudflare.com" required>
+        </label>
+        <button type="submit">Join</button>
+        <div id="joinStatus" class="status"></div>
+        <p class="hint">No install? Players can also just open the link in a web browser.</p>
+      </form>
+    </section>
+  </main>
+  <script src="launcher.js"></script>
+</body>
+</html>

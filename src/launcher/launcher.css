@@ -1,0 +1,23 @@
+:root { --sand: #e9dcc0; --paper: #f4ecd8; --ink: #2b2418; --khaki: #6b5a36; --red: #8c2b1e; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at top, #3a3123, #1d1a14 70%); color: var(--ink); font-family: "Courier New", ui-monospace, monospace; display: grid; place-items: center; }
+main { width: min(980px, 94vw); padding: 32px 0; }
+header { text-align: center; color: var(--sand); margin-bottom: 28px; position: relative; }
+h1 { font-size: 52px; letter-spacing: 6px; text-transform: uppercase; margin: 8px 0; font-family: Georgia, serif; }
+.sub { opacity: .75; letter-spacing: 2px; }
+.stamp { display: inline-block; border: 3px solid var(--red); color: #c2483a; padding: 2px 12px; transform: rotate(-4deg); font-weight: bold; letter-spacing: 4px; }
+.cards { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.card { background: var(--paper); border: 1px solid #c9b993; padding: 24px; box-shadow: 0 10px 30px #0008; display: flex; flex-direction: column; gap: 12px; }
+.card h2 { margin: 0; font-family: Georgia, serif; text-transform: uppercase; letter-spacing: 2px; border-bottom: 2px solid var(--ink); padding-bottom: 6px; }
+label { display: flex; flex-direction: column; gap: 4px; font-weight: bold; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
+label.check { flex-direction: row; align-items: center; text-transform: none; letter-spacing: 0; font-weight: normal; font-size: 14px; }
+input:not([type]), input[type=text] { font: inherit; padding: 8px 10px; border: 1px solid var(--khaki); background: #fffaf0; }
+button { font: inherit; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; padding: 10px; background: var(--khaki); color: var(--paper); border: none; cursor: pointer; }
+button:hover { background: #57482a; }
+button:disabled { opacity: .6; cursor: wait; }
+.chip { padding: 4px 8px; font-size: 12px; letter-spacing: 0; text-transform: none; margin: 4px 4px 0 0; background: #d8c9a4; color: var(--ink); }
+.label { font-size: 12px; display: block; }
+.status { min-height: 1.2em; font-size: 13px; color: var(--red); }
+.hint { font-size: 12px; opacity: .7; margin: 0; }
+code { background: #e6dbc0; padding: 0 4px; }
+@media (max-width: 760px) { .cards { grid-template-columns: 1fr; } h1 { font-size: 34px; } }

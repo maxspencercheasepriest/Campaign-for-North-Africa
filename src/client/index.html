@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desert Command</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+  <div id="nameGate" class="overlay hidden">
+    <form id="nameForm" class="dialog">
+      <h2>Report for duty</h2>
+      <label>Your name <input id="nameInput" maxlength="24" required autocomplete="off"></label>
+      <button type="submit">Enter HQ</button>
+    </form>
+  </div>
+
+  <header id="topbar">
+    <div class="brand">DESERT COMMAND</div>
+    <div id="turnInfo"></div>
+    <div id="readyInfo"></div>
+    <div class="spacer"></div>
+    <button id="inviteBtn" class="hidden" title="Copy the link your friends use to join">Copy invite link</button>
+    <button id="forceBtn" class="hidden" title="Host only: resolve the stage now, with empty orders for anyone not ready">Force stage</button>
+    <button id="launcherBtn" class="hidden">Leave</button>
+    <span id="conn" class="conn">connecting…</span>
+  </header>
+
+  <div id="lobby" class="hidden">
+    <h1>Staff Assignment</h1>
+    <p class="sub">Each side has five seats. Take one. Empty seats are covered by your Commander-in-Chief, or by whoever is on the side.</p>
+    <div id="seatGrid" class="seat-grid"></div>
+    <div id="lobbyHost" class="hidden lobby-host">
+      <label class="check"><input type="checkbox" id="optPasta" checked> Italian pasta-water rule</label>
+      <button id="startBtn">Start the campaign</button>
+    </div>
+    <p id="lobbyWait" class="sub hidden">Waiting for the host to start the campaign…</p>
+    <div id="unseated" class="unseated"></div>
+  </div>
+
+  <div id="game" class="hidden">
+    <div id="mapWrap">
+      <canvas id="map"></canvas>
+      <div id="hexInfo" class="hexinfo"></div>
+      <div class="maphelp">Drag to pan · wheel to zoom</div>
+    </div>
+    <aside id="panel">
+      <nav id="tabs">
+        <button data-tab="orders" class="active">Orders</button>
+        <button data-tab="supply">Supply</button>
+        <button data-tab="staff">Staff</button>
+        <button data-tab="log">Log</button>
+        <button data-tab="chat">Chat</button>
+      </nav>
+      <section id="tab-orders" class="tab"></section>
+      <section id="tab-supply" class="tab hidden"></section>
+      <section id="tab-staff" class="tab hidden"></section>
+      <section id="tab-log" class="tab hidden"></section>
+      <section id="tab-chat" class="tab hidden">
+        <div id="chatLog" class="chatlog"></div>
+        <form id="chatForm" class="chatform">
+          <select id="chatChannel"><option value="team">Staff</option><option value="all">All</option></select>
+          <input id="chatInput" maxlength="400" autocomplete="off" placeholder="Signal…">
+          <button>Send</button>
+        </form>
+      </section>
+    </aside>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script type="module" src="client.js"></script>
+</body>
+</html>

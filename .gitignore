@@ -1,0 +1,8 @@
+node_modules/
+dist/
+vendor/
+*.log
+saves/
+# Never commit rulebooks or scans
+*.pdf
+rules-source/

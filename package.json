@@ -1,0 +1,59 @@
+{
+  "name": "campaign-for-north-africa",
+  "productName": "Desert Command",
+  "version": "0.1.0",
+  "description": "Team-based online desert war game, 1940-43. Up to 5 players per side; one player hosts, others join by link.",
+  "type": "module",
+  "main": "src/main/main.js",
+  "author": "Flick",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "server": "node src/server/standalone.js",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --win --publish never"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "uk.flick.desertcommand",
+    "productName": "Desert Command",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/",
+        "to": "bin/",
+        "filter": [
+          "cloudflared*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "artifactName": "DesertCommand-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "DesertCommand-Portable-${version}.exe"
+    }
+  }
+}
