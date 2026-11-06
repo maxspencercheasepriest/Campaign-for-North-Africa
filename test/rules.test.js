@@ -75,14 +75,14 @@ test('terrain effects: roads, tracks, escarpments, salt marsh', () => {
 test('capability points, disorganisation and the 150% foot limit', () => {
   const g = createGame();
   toMoveCombat(g);
-  const u = g.units.find((x) => x.id === 'it-pav'); // foot, CPA 8
+  const u = g.units.find((x) => x.id === 'it-pav'); // foot, CPA 10
   u.pos = [2, 3]; // Tripoli, on the coast road
   const path = [3, 4, 5, 6, 7, 8, 9, 10].map((c) => [c, 3]); // 8 road hexes = 8 CP on foot
-  u.cpUsed = 5;
-  assert.match(act(g, 'axis', { action: 'move', unitId: u.id, path }), /may not voluntarily spend more than 12/);
+  u.cpUsed = 8;
+  assert.match(act(g, 'axis', { action: 'move', unitId: u.id, path }), /may not voluntarily spend more than 15/);
   assert.equal(act(g, 'axis', { action: 'move', unitId: u.id, path: path.slice(0, 7) }), null);
-  assert.equal(u.cpUsed, 12);
-  assert.equal(u.cohesion, -4, '4 CP over a CPA of 8 = 4 Disorganisation Points');
+  assert.equal(u.cpUsed, 15);
+  assert.equal(u.cohesion, -5, '5 CP over a CPA of 10 = 5 Disorganisation Points');
 });
 
 test('zones of control: stop on entry, no ZOC-to-ZOC, mandatory attack', () => {

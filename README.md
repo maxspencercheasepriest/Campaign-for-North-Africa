@@ -8,9 +8,17 @@ A team-based online game of the Western Desert campaign, 1940–43. It's a digit
 - **Fog of war per side.** The host runs the authoritative game, so clients only ever receive what their side can see.
 - **Campaigns autosave** on the host's machine after every action. Continue a campaign from the launcher.
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Launcher](docs/screenshots/launcher.png) **Launcher:** host a campaign (with a Cloudflare link) or join one | ![Staff assignment](docs/screenshots/lobby.png) **Staff assignment:** five seats per side |
+| ![Movement](docs/screenshots/movement.png) **Movement:** reachable hexes with their capability-point cost, from the Terrain Effects Chart | ![Combat](docs/screenshots/combat.png) **Combat:** barrage, anti-armour fire, morale and close assault, with a full dice report |
+| ![Initiative](docs/screenshots/initiative.png) **Initiative:** the holder chooses to move first or last in each Operations Stage | ![Formations](docs/screenshots/formations.png) **Formations:** capability points, cohesion, TOE and supplies |
+
 ## Status
 
-The real Land Game turn structure is in: initiative, Operations Stages with Player A and Player B, capability points and cohesion, the full Terrain Effects Chart, continual movement, stacking and zones of control. Combat, supply and air are still placeholders. See **[docs/RULES-STATUS.md](docs/RULES-STATUS.md)** for the section-by-section checklist.
+The real Land Game turn structure is in: initiative, Operations Stages with Player A and Player B, capability points and cohesion, the full Terrain Effects Chart, continual movement, stacking and zones of control. Land combat is in too: barrage, anti-armour fire and close assault with morale, using the real result tables and weapon ratings. Supply and air are still placeholders. See **[docs/RULES-STATUS.md](docs/RULES-STATUS.md)** for the section-by-section checklist.
 
 ## Download
 

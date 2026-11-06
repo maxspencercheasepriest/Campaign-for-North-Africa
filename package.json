@@ -11,7 +11,7 @@
   "scripts": {
     "start": "electron .",
     "server": "node src/server/standalone.js",
-    "test": "node --test test/rules.test.js test/multiplayer.test.js",
+    "test": "node --test test/tables.test.js test/rules.test.js test/combat.test.js test/multiplayer.test.js",
     "dist": "electron-builder --win --publish never",
     "dist:mac": "electron-builder --mac --universal --publish never"
   },

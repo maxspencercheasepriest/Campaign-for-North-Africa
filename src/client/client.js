@@ -239,7 +239,7 @@ function declareForm() {
 
 function moveCombatPanel() {
   const g = S.game;
-  if (!myPhase()) return `<p>${sideName(g.phasing)} is Player ${g.half} and is moving and fighting. Your units may only react once Reaction is implemented.</p>`;
+  if (!myPhase()) return `<p>${sideName(g.phasing)} is Player ${g.half} and is moving and fighting. Your units may only react once Reaction is implemented.</p>` + lastCombatReport();
   const seg = g.seg;
   const sel = myUnits().find((u) => u.id === selected);
   let html = `<p>Segment <b>${seg.n}</b> · ${seg.mode === 'move' ? 'Movement' : 'Combat'}.</p>`;
@@ -247,6 +247,7 @@ function moveCombatPanel() {
     html += `<p class="help">Click one of your units, then a highlighted hex. Units stop on entering an enemy zone of control. Units that end a segment more than 2 hexes from the enemy can't move again this phase.</p>`;
     if (sel) html += unitCard(sel);
     html += `<div class="btnrow"><button class="act" data-act="toCombat">Finish moving → combat</button></div>`;
+    html += lastCombatReport();
   } else {
     html += combatList();
     html += `<div class="btnrow"><button class="act" data-act="nextSegment">New movement segment</button></div>`;
@@ -261,22 +262,37 @@ function unitCard(u) {
   const moved = S.game.seg?.moved?.includes(u.id);
   return `<div class="unitcard"><b>${esc(u.name)}</b><br>
     CPA ${u.cpa} · used ${fmtCP(u.cpUsed)}${u.cpa <= 10 ? ` (foot: max ${u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT})` : ''} · cohesion <b class="${u.cohesion < 0 ? 'bad' : ''}">${u.cohesion}</b><br>
-    Strength ${u.str}/${u.maxStr}${u.motorised ? ` · fuel ${u.fuel}` : ''} · water ${u.water} · ammo ${u.ammo}${u.motorised ? ` · breakdown pts ${fmtCP(u.bp)}` : ''}
+    Morale ${u.morale > 0 ? '+' : ''}${u.morale} · TOE ${u.str}/${u.maxStr}${u.motorised ? ` · fuel ${u.fuel}` : ''} · water ${u.water} · ammo ${u.ammo}${u.motorised ? ` · breakdown pts ${fmtCP(u.bp)}` : ''}
+    <br><span class="muted">${(u.elements || []).map((e) => `${e.toe}× ${esc(e.w)}`).join(' · ')}</span>
     ${frozen ? '<br><span class="bad">Cannot move again this phase.</span>' : moved ? '<br><span class="muted">Already moved this segment.</span>' : ''}</div>`;
 }
 const fmtCP = (n) => (Number.isInteger(n) ? n : n.toFixed(1));
 
 function combatList() {
   const targets = enemyUnits().filter((e) => myUnits().some((u) => isCombat(u) && distance(u.pos, e.pos) === 1));
-  if (!targets.length) return '<p>No enemy units are adjacent.</p>';
-  return `<p class="help">Assault costs each attacker ${CP.phasingAssault} CP and each defender ${CP.defend} CP. Combat results are placeholders until the Barrage / Anti-Armour / Close Assault rules are in.</p>` +
+  if (!targets.length) return '<p>No enemy units are adjacent.</p>' + lastCombatReport();
+  const attackedHexes = new Set(S.game.seg?.attacked || []);
+  return `<p class="help">Each hex can be attacked once per segment. A full assault costs each attacker ${CP.phasingAssault} CP and each defender ${CP.defend} CP; a probe costs 2. The fight runs barrage, anti-armour fire, then close assault, with morale checks. The defender's choices are automatic for now.</p>` +
     targets.map((e) => {
       const adj = myUnits().filter((u) => isCombat(u) && distance(u.pos, e.pos) === 1);
       const t = TILES[key(...e.pos)];
-      return `<div class="attack"><b>${esc(e.name)}</b> <span class="muted">(${e.str} steps, ${esc(TERRAIN[t.t].label)})</span>
-        ${adj.map((u) => `<label class="check"><input type="checkbox" data-att="${e.id}" value="${u.id}" checked> ${esc(u.name)} (str ${u.str}, cohesion ${u.cohesion}${u.ammo ? '' : ', no ammo!'})</label>`).join('')}
-        <button class="act" data-attack="${e.id}">Assault</button></div>`;
-    }).join('');
+      const done = attackedHexes.has(key(...e.pos));
+      return `<div class="attack"><b>${esc(e.name)}</b> <span class="muted">(${e.str} TOE, ${esc(TERRAIN[t.t].label)})</span>
+        ${done ? '<span class="muted">Already attacked this segment.</span>' : `
+        ${adj.map((u) => `<label class="check"><input type="checkbox" data-att="${e.id}" value="${u.id}" checked> ${esc(u.name)} (${u.str} TOE, cohesion ${u.cohesion}${u.ammo ? '' : ', no ammo!'})</label>`).join('')}
+        <div class="opts">
+          <label class="check"><input type="checkbox" data-opt-fwd="${e.id}" checked> Artillery forward <span class="muted">(fires together and joins the assault, but is exposed)</span></label>
+          <label class="check"><input type="checkbox" data-opt-at="${e.id}"> Tanks fire anti-armour <span class="muted">(instead of joining the close assault)</span></label>
+          <label class="check"><input type="checkbox" data-opt-probe="${e.id}"> Probe only <span class="muted">(2 CP, no Engaged result)</span></label>
+        </div>
+        <button class="act" data-attack="${e.id}">Attack</button>`}</div>`;
+    }).join('') + lastCombatReport();
+}
+
+function lastCombatReport() {
+  const c = S.game.lastCombat;
+  if (!c || c.turn !== S.game.turn) return '';
+  return `<details class="report" open><summary>Last combat: ${esc(c.title)}</summary>${c.lines.map((l) => `<p>${esc(l)}</p>`).join('')}</details>`;
 }
 
 function obligationList() {
@@ -320,7 +336,12 @@ function wireOrders(el) {
     const id = b.dataset.attack;
     const attackerIds = [...el.querySelectorAll(`[data-att="${id}"]:checked`)].map((c) => c.value);
     if (!attackerIds.length) return toast('Tick at least one attacking unit.');
-    send({ type: 'action', action: 'attack', targetId: id, attackerIds });
+    send({
+      type: 'action', action: 'attack', targetId: id, attackerIds,
+      artilleryForward: el.querySelector(`[data-opt-fwd="${id}"]`).checked,
+      tankRole: el.querySelector(`[data-opt-at="${id}"]`).checked ? 'antiArmour' : 'assault',
+      probe: el.querySelector(`[data-opt-probe="${id}"]`).checked,
+    });
   }));
   el.querySelector('[data-add-transfer]')?.addEventListener('click', () => {
     const t = { from: $('tFrom').value, to: $('tTo').value, res: $('tRes').value, amount: parseInt($('tAmt').value, 10) || 0 };
@@ -341,6 +362,7 @@ function renderSupply() {
     ${myUnits().map((u) => `<tr class="${u.cohesion <= -10 || u.water <= 0 ? 'warn' : ''}"><td>${esc(u.name)}</td><td>${fmtCP(u.cpUsed)}/${u.cpa}</td><td>${u.cohesion}</td><td>${u.str}/${u.maxStr}</td><td>${u.motorised ? u.fuel : '–'}</td><td>${u.water}</td><td>${u.ammo}</td></tr>`).join('')}</table>
     <h3>Supply dumps</h3><table class="grid"><tr><th>Dump</th><th>Fuel</th><th>Water</th><th>Ammo</th><th>Stores</th></tr>
     ${dumps.map(([k, d]) => `<tr><td>${esc(hexLabel(k))}</td><td>${n(d.fuel)}</td><td>${n(d.water)}</td><td>${n(d.ammo)}</td><td>${n(d.stores)}</td></tr>`).join('')}</table>
+    <p>Prisoners held: <b>${S.game.prisoners?.[mySide()] ?? 0}</b> TOE points.</p>
     <p class="help">CP = capability points used this Operations Stage / allowance. Spending past the allowance costs cohesion. A stage spent resting restores up to 5 cohesion (never above 0). At −26 a unit can't move or fight.</p>
     <p class="help">Supply is still placeholder: units within 3 hexes of a dump top up at the end of each Game-Turn${S.game.options?.pastaRule ? '; Italian units need extra water for pasta' : ''}.</p>`;
 }

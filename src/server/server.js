@@ -26,7 +26,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
     try {
       room = { ...room, ...JSON.parse(fs.readFileSync(savePath, 'utf8')) };
       for (const p of room.players) p.connected = false;
-      if (room.game && room.game.version !== 2) {
+      if (room.game && room.game.version !== 3) {
         console.error('Save is from an older rules version; returning to the lobby with seats kept.');
         room.game = null;
         room.phase = 'lobby';

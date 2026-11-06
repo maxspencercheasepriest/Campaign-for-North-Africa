@@ -112,39 +112,49 @@ export function buildMap() {
 const port = (id) => PORTS.find((p) => p.id === id);
 const at = (id, dc = 0, dr = 0) => [port(id).col + dc, port(id).row + dr];
 
-// size: division | brigade | battalion (stacking points 5 / 2 / 1)
-// cpa: Capability Point Allowance (<= 10 means foot-bound)
-const U = (id, side, nation, name, type, size, cpa, str, pos, extra = {}) => ({
-  id, side, nation, name, type, size, cpa, str, maxStr: str,
-  motorised: cpa > 10,
-  fuel: cpa > 10 ? 30 : 0, water: 3, ammo: 3,
-  cpUsed: 0, cohesion: 0, bp: 0,
-  pos,
-  ...extra,
-});
+// A formation is a counter made of weapon-system elements, each with TOE Strength Points (see weapons.js).
+// size: division | brigade | battalion (stacking points 5 / 2 / 1). cpa <= 10 means foot-bound.
+// Compositions follow the Organisation-at-Arrival style but are PROVISIONAL until those charts are fully entered.
+const E = (w, toe) => ({ w, toe, max: toe });
+const U = (id, side, nation, name, type, size, cpa, morale, elements, pos, extra = {}) => {
+  const u = {
+    id, side, nation, name, type, size, cpa, morale, elements,
+    motorised: cpa > 10,
+    fuel: cpa > 10 ? 30 : 0, water: 3, ammo: 3,
+    cpUsed: 0, cohesion: 0, bp: 0,
+    pos,
+    ...extra,
+  };
+  u.str = elements.reduce((s, e) => s + e.toe, 0);
+  u.maxStr = u.str;
+  return u;
+};
+
+const itDiv = () => [E('IT inf (u)', 42), E('IT MG (bb)', 2), E('65/17 Gun', 2), E('47/32 AT', 2), E('75/27 Gun', 6), E('100/17 Howitzer', 3), E('75/46 AA', 2)];
+const libDiv = () => [E('IT inf (x)', 25), E('75/27 Gun', 3), E('47/32 AT', 1)];
 
 export function initialUnits() {
   return [
-    U('it-1lib', 'axis', 'it', '1st Libyan Div', 'inf', 'division', 8, 5, at('sollum', -1, 3)),
-    U('it-2lib', 'axis', 'it', '2nd Libyan Div', 'inf', 'division', 8, 5, at('bardia', 0, 3)),
-    U('it-62', 'axis', 'it', '62nd Marmarica Div', 'inf', 'division', 8, 6, at('bardia')),
-    U('it-63', 'axis', 'it', '63rd Cirene Div', 'inf', 'division', 8, 6, at('bardia', -2, 1)),
-    U('it-mal', 'axis', 'it', 'Maletti Group', 'mot', 'division', 20, 4, at('sollum', 0, 4)),
-    U('it-1cc', 'axis', 'it', '1st Blackshirt Div', 'inf', 'division', 8, 5, at('tobruk')),
-    U('it-pav', 'axis', 'it', '17th Pavia Div', 'inf', 'division', 8, 6, at('tripoli', 1, 1)),
-    U('it-bol', 'axis', 'it', '25th Bologna Div', 'inf', 'division', 8, 6, at('misurata')),
-    U('cw-7arm', 'cw', 'uk', '7th Armoured Div', 'arm', 'division', 25, 6, at('barrani', 2, 3)),
-    U('cw-4ind', 'cw', 'in', '4th Indian Div', 'mot', 'division', 20, 6, at('matruh', -1, 1)),
-    U('cw-mat', 'cw', 'uk', 'Matruh Garrison', 'inf', 'brigade', 8, 4, at('matruh')),
-    U('cw-16', 'cw', 'uk', '16th Infantry Bde', 'inf', 'brigade', 10, 3, at('alamein')),
+    U('it-1lib', 'axis', 'it', '1st Libyan Div', 'inf', 'division', 10, -2, libDiv(), at('sollum', -1, 3)),
+    U('it-2lib', 'axis', 'it', '2nd Libyan Div', 'inf', 'division', 10, -2, [...libDiv(), E('CV 33', 4)], at('bardia', 0, 3)),
+    U('it-62', 'axis', 'it', '62nd Marmarica Div', 'inf', 'division', 10, -1, itDiv(), at('bardia')),
+    U('it-63', 'axis', 'it', '63rd Cirene Div', 'inf', 'division', 10, -1, itDiv(), at('bardia', -2, 1)),
+    U('it-mal', 'axis', 'it', 'Maletti Group', 'mot', 'division', 20, -2, [E('IT inf (w)', 15), E('IT inf (x)', 10), E('75/27 Gun', 3), E('75/18 Gun-Howitzer', 2), E('M 11/39', 7)], at('sollum', 0, 4)),
+    U('it-1cc', 'axis', 'it', '1st Blackshirt Div', 'inf', 'division', 10, -1, itDiv(), at('tobruk')),
+    U('it-pav', 'axis', 'it', '17th Pavia Div', 'inf', 'division', 10, -1, itDiv(), at('tripoli', 1, 1)),
+    U('it-bol', 'axis', 'it', '25th Bologna Div', 'inf', 'division', 10, -1, itDiv(), at('misurata')),
+    U('cw-7arm', 'cw', 'uk', '7th Armoured Div', 'arm', 'division', 25, 1, [E('Mark VI Light', 10), E('A9 Cruiser', 3), E('A10 Cruiser', 3), E('A13 Cruiser', 4), E('CW inf (h)', 10), E('18/25-pounder Gun', 6), E('2-pounder AT', 4)], at('barrani', 2, 3)),
+    U('cw-4ind', 'cw', 'in', '4th Indian Div', 'inf', 'division', 10, 1, [E('CW inf (k)', 63), E('18/25-pounder Gun', 12), E('2-pounder AT', 4)], at('matruh', -1, 1)),
+    U('cw-mat', 'cw', 'uk', 'Matruh Garrison', 'inf', 'brigade', 10, 0, [E('CW inf (q)', 18), E('3.7in Howitzer', 2)], at('matruh')),
+    U('cw-16', 'cw', 'uk', '16th Infantry Bde', 'inf', 'brigade', 15, 1, [E('CW inf (h)', 15)], at('alamein')),
   ];
 }
 
 export const REINFORCEMENTS = [
-  { turn: 13, port: 'alexandria', unit: U('cw-6aus', 'cw', 'au', '6th Australian Div', 'inf', 'division', 10, 6, null) },
-  { turn: 22, port: 'tripoli', unit: U('de-5l', 'axis', 'de', '5th Light Div', 'arm', 'division', 25, 6, null) },
-  { turn: 22, port: 'tripoli', unit: U('de-dak', 'axis', 'de', 'DAK HQ (Rommel)', 'hq', 'battalion', 30, 1, null, { rommel: true }) },
-  { turn: 26, port: 'alexandria', unit: U('cw-2nz', 'cw', 'nz', '2nd New Zealand Div', 'inf', 'division', 10, 6, null) },
+  { turn: 13, port: 'alexandria', unit: U('cw-6aus', 'cw', 'au', '6th Australian Div', 'inf', 'division', 10, 1, [E('CW inf (k)', 63), E('25-pounder Gun', 12), E('2-pounder AT', 4)], null) },
+  { turn: 22, port: 'tripoli', unit: U('de-5l', 'axis', 'de', '5th Light Div', 'arm', 'division', 25, 2, [E('PzKw II', 6), E('PzKw III', 6), E('DE inf', 20)], null) },
+  { turn: 22, port: 'tripoli', unit: U('de-dak', 'axis', 'de', 'DAK HQ (Rommel)', 'hq', 'battalion', 30, 2, [], null, { rommel: true }) },
+  { turn: 26, port: 'alexandria', unit: U('cw-2nz', 'cw', 'nz', '2nd New Zealand Div', 'inf', 'division', 10, 1, [E('CW inf (k)', 63), E('25-pounder Gun', 12), E('2-pounder AT', 4)], null) },
 ];
 
 const D = (fuel, water, ammo, stores) => ({ fuel, water, ammo, stores });

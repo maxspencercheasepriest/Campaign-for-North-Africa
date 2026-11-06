@@ -17,6 +17,7 @@ import {
   buildMap, initialUnits, initialDumps, initialPortOwners, REINFORCEMENTS,
   AIR_POINTS, TRUCK_CAPACITY, CONVOY, FUEL_EVAPORATION, SUPPLY_RANGE, VISION_RANGE,
 } from '../shared/scenario.js';
+import { resolveCombat, makeRetreat, rawDefensiveCA, syncStr } from './combat.js';
 import {
   turnDate, initiativeRating, CP, NON_MOTORISED_VOLUNTARY_LIMIT, COHESION_MAX, COHESION_COLLAPSE,
   REST_RP, VICTORY_RP, HEAVY_LOSS_DP, CONTINUAL_MOVE_RANGE, STACKING_POINTS, TERRAIN, HEXSIDES,
@@ -43,7 +44,7 @@ export const gameMap = () => (mapCache ||= buildMap());
 
 export function createGame(options = {}) {
   const g = {
-    version: 2,
+    version: 3,
     scenario: SCENARIO.id,
     turn: SCENARIO.firstTurn,
     opStage: 0,
@@ -60,6 +61,8 @@ export function createGame(options = {}) {
     pending: { axis: null, cw: null },
     ready: { axis: false, cw: false },
     log: [],
+    lastCombat: null,
+    prisoners: { axis: 0, cw: 0 },
     winner: null,
     over: false,
     seed: (Date.now() ^ 0x9e3779b9) >>> 0,
@@ -323,9 +326,11 @@ const unitsAt = (g, pos) => g.units.filter((u) => u.pos[0] === pos[0] && u.pos[1
 const isCombatUnit = (u) => u.type !== 'hq' && u.type !== 'truck';
 
 function exertsZoc(g, u) {
-  if (!isCombatUnit(u) || collapsed(u)) return false; // [10.11, 10.14]
+  if (!isCombatUnit(u) || collapsed(u) || u.str <= 0) return false; // [10.11, 10.14]
+  const hex = unitsAt(g, u.pos).filter((x) => x.side === u.side && isCombatUnit(x));
+  if (rawDefensiveCA(hex) < 10) return false; // too weak to control the surrounding hexes [10.15]
   if ((STACKING_POINTS[u.size] ?? 0) > 1) return true;
-  return hexSP(unitsAt(g, u.pos).filter((x) => x.side === u.side && isCombatUnit(x))) > 1;
+  return hexSP(hex) > 1;
 }
 
 function zocReaches(g, u, target) {
@@ -422,7 +427,8 @@ function actMove(g, side, a) {
   // Totally disorganised enemies surrender when approached [6.26].
   for (const e of g.units.filter((x) => x.side !== side && collapsed(x) && distance(x.pos, u.pos) === 1)) {
     log(g, 'all', `${e.name} surrenders to ${u.name}.`);
-    e.str = 0;
+    g.prisoners[side] = (g.prisoners[side] || 0) + e.str;
+    e.elements = []; syncStr(e);
   }
   removeDestroyed(g);
   updateOwnership(g);
@@ -466,88 +472,58 @@ function actNextSegment(g, side) {
   return null;
 }
 
-// PLACEHOLDER combat until Barrage / Anti-Armour / Close Assault (11.0-15.0) are implemented.
-// CP costs and cohesion effects already follow the rules.
+// Combat [11.0-15.0]: one assault on one enemy hex per segment [15.23], full procedure in combat.js.
 function actAttack(g, side, a) {
   if (g.seg.mode !== 'combat') return 'Finish movement and start the combat segment first.';
   const target = g.units.find((x) => x.id === a.targetId && x.side !== side);
   if (!target) return 'Unknown target.';
+  const targetPos = target.pos;
+  if (g.seg.attacked.includes(key(...targetPos))) return 'That hex has already been attacked this segment [15.23].';
   const attackers = (a.attackerIds || []).map((id) => g.units.find((x) => x.id === id && x.side === side)).filter(Boolean);
   if (!attackers.length) return 'Choose at least one attacking unit.';
+  const map = gameMap();
   for (const u of attackers) {
-    if (distance(u.pos, target.pos) !== 1) return `${u.name} is not adjacent to ${target.name}.`;
+    if (distance(u.pos, targetPos) !== 1) return `${u.name} is not adjacent to ${target.name}.`;
     if (collapsed(u)) return `${u.name} is too disorganised to attack.`;
     if (!isCombatUnit(u)) return `${u.name} is not a combat unit.`;
+    if (u.ammo <= 0) return `${u.name} is out of ammunition [15.15].`;
+    const e = map.hexsides[edgeKey(u.pos, targetPos)];
+    if (u.motorised && e?.type === 'escarpment' && e.down === key(...u.pos)) return `${u.name} is motorised and cannot assault up an escarpment [15.34].`;
+    if (u.motorised && map.tiles[key(...targetPos)].t === 'saltmarsh') return `${u.name} is motorised and cannot assault into a salt marsh [8.44].`;
   }
-  const defenders = unitsAt(g, target.pos);
-  for (const u of attackers) spendCP(g, u, CP.phasingAssault);
-  for (const d of defenders) spendCP(g, d, CP.defend);
-  const strBefore = defenders.reduce((s, d) => s + d.str, 0);
-  const attStrBefore = attackers.reduce((s, u) => s + u.str, 0);
-
-  const groundAir = g.air[side]?.ground || 0;
-  const att = attackers.reduce((s, u) => s + effStr(u), 0) + groundAir / 3;
-  const terr = TERRAIN[gameMap().tiles[key(...target.pos)].t];
-  const terrMult = 1 + 0.25 * shiftCount(terr.combat?.closeAssault) + hexsideDefence(target.pos, attackers);
-  const def = defenders.reduce((s, d) => s + (collapsed(d) ? 0 : effStr(d)), 0) * Math.max(0.5, terrMult);
-  for (const u of attackers) u.ammo = Math.max(0, u.ammo - 1);
-  for (const d of defenders) d.ammo = Math.max(0, d.ammo - 1);
-  const ratio = att / Math.max(0.5, def);
-  const roll = d6(g) + (ratio >= 3 ? 2 : ratio >= 2 ? 1 : ratio < 1 ? -1 : 0);
-  let result;
-  if (roll <= 2) { attackers[0].str -= 1; result = 'attack repulsed, attacker loses a step'; }
-  else if (roll <= 4) { target.str -= 1; attackers[0].str -= 1; result = 'both sides lose a step'; for (const d of defenders) d.engaged = true; }
-  else if (roll <= 6) { target.str -= 1; retreat(g, defenders); result = 'defender loses a step and falls back'; }
-  else { target.str -= 2; retreat(g, defenders); result = 'defender routed'; }
-
-  // Heavy losses disorganise [6.21]; clearing the hex rewards the attackers [6.24.2].
-  const defLossPct = 1 - defenders.reduce((s, d) => s + Math.max(0, d.str), 0) / strBefore;
-  const attLossPct = 1 - attackers.reduce((s, u) => s + Math.max(0, u.str), 0) / attStrBefore;
-  if (defLossPct >= 0.3) for (const d of defenders) d.cohesion -= HEAVY_LOSS_DP;
-  if (attLossPct >= 0.3) for (const u of attackers) u.cohesion -= HEAVY_LOSS_DP;
+  // A phasing unit pays combat CP at most once per segment (5), a defender at most 3 [11.24].
+  g.seg.paid ||= {};
+  const spend = (u, cp) => {
+    const already = g.seg.paid[u.id] || 0;
+    const cap = u.side === side ? 5 : 3;
+    const pay = Math.max(0, Math.min(cp, cap - already));
+    g.seg.paid[u.id] = already + pay;
+    if (pay) spendCP(g, u, pay);
+  };
+  const ctx = {
+    map,
+    d6: () => d6(g),
+    d66: () => d6(g) * 10 + d6(g),
+    spendCP: spend,
+    inEnemyZoc,
+    log: (t) => log(g, 'all', t),
+  };
+  ctx.retreatUnits = makeRetreat(g, { map, spendCP: (u, cp) => spendCP(g, u, cp), inEnemyZoc });
+  log(g, 'all', `— ${attackers.map((u) => u.name).join(', ')} ${a.probe ? 'probe' : 'attack'} ${target.name}${unitsAt(g, targetPos).length > 1 ? ' and the units with it' : ''} —`);
+  const res = resolveCombat(g, ctx, attackers, targetPos, { probe: !!a.probe, artilleryForward: a.artilleryForward !== false, tankRole: a.tankRole });
+  g.lastCombat = { turn: g.turn, stage: g.opStage, lines: res.lines, title: `${attackers.map((u) => u.name).join(', ')} → ${target.name}` };
   removeDestroyed(g);
-  const hexCleared = !g.units.some((x) => x.side !== side && key(...x.pos) === key(...target.pos));
-  if (hexCleared) for (const u of attackers.filter((x) => x.str > 0)) earnRP(u, VICTORY_RP);
-  g.seg.attacked.push(key(...target.pos));
-  log(g, 'all', `${attackers.map((u) => u.name).join(', ')} assaulted ${target.name} (${att.toFixed(1)} vs ${def.toFixed(1)}, roll ${roll}): ${result}.`);
+  if (res.defendersCleared) for (const u of attackers.filter((x) => x.str > 0)) earnRP(u, VICTORY_RP); // [6.24.2]
+  g.seg.attacked.push(key(...targetPos));
   updateOwnership(g);
   return null;
 }
 
-const shiftCount = (s) => (s && s[0] === 'L' ? Number(s.slice(1)) : s && s[0] === 'R' ? -Number(s.slice(1)) : 0);
-function hexsideDefence(targetPos, attackers) {
-  // Use the worst (most defensive) hexside the attackers cross.
-  let best = 0;
-  for (const u of attackers) {
-    const e = gameMap().hexsides[edgeKey(u.pos, targetPos)];
-    if (!e) continue;
-    const t = e.type === 'escarpment' ? (e.down === key(...u.pos) ? 'upEscarpment' : 'downEscarpment') : e.type === 'slope' ? (e.down === key(...u.pos) ? 'upSlope' : 'downSlope') : e.type;
-    best = Math.max(best, 0.25 * shiftCount(HEXSIDES[t]?.combat?.closeAssault));
-  }
-  return best;
-}
-
-const effStr = (u) => (u.ammo > 0 ? u.str : u.str / 2);
-
-function retreat(g, defenders) {
-  for (const u of defenders) {
-    if (u.str <= 0) continue;
-    const options = neighbours(...u.pos).filter((n) =>
-      stepCost(gameMap(), u.pos, n, { motorised: isMotorised(u) }) &&
-      !g.units.some((x) => x.side !== u.side && x.pos[0] === n[0] && x.pos[1] === n[1]) &&
-      !inEnemyZoc(g, u, n) &&
-      hexSP(unitsAt(g, n).filter((x) => x.side === u.side)) + (STACKING_POINTS[u.size] ?? 0) <= stackingLimit(gameMap(), n));
-    if (!options.length) { u.str -= 1; continue; } // must stand and take further losses
-    options.sort((A, B) => (u.side === 'axis' ? A[0] - B[0] : B[0] - A[0]));
-    const c = stepCost(gameMap(), u.pos, options[0], { motorised: isMotorised(u) });
-    spendCP(g, u, c.cp); // involuntary movement still costs CP [8.12]
-    u.pos = options[0];
-  }
-}
-
 function removeDestroyed(g) {
-  for (const u of g.units.filter((x) => x.str <= 0)) log(g, 'all', `${u.name} has been destroyed or captured.`);
-  g.units = g.units.filter((x) => x.str > 0);
+  for (const u of g.units) if (u.elements) syncStr(u);
+  const gone = g.units.filter((x) => x.str <= 0 && x.type !== 'hq');
+  for (const u of gone) log(g, 'all', `${u.name} has been destroyed or captured.`);
+  g.units = g.units.filter((x) => !gone.includes(x));
 }
 
 function updateOwnership(g) {
@@ -586,7 +562,9 @@ function endGameTurn(g) {
     const waterNeed = 1 + (g.options.pastaRule && u.nation === 'it' ? 1 : 0);
     u.water -= waterNeed;
     if (u.water < 0) {
-      u.water = 0; u.str -= 1;
+      u.water = 0;
+      const big = [...u.elements].sort((a, b) => b.toe - a.toe)[0];
+      if (big) { big.toe -= 1; syncStr(u); }
       log(g, u.side, `${u.name} is out of water and loses a step.`);
     }
   }
@@ -650,6 +628,8 @@ export function viewFor(g, side) {
     truckCapacity: TRUCK_CAPACITY[side],
     options: g.options,
     obligations,
+    lastCombat: g.lastCombat,
+    prisoners: g.prisoners,
     winner: g.winner,
     over: g.over,
     log: g.log.filter((l) => l.side === 'all' || l.side === side).slice(-100),

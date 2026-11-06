@@ -84,3 +84,8 @@ tr.warn td { color: var(--red); font-weight: bold; }
 .unitcard { background: #e6dbc0; padding: 6px 8px; margin: 6px 0; font-size: 12px; line-height: 1.5; }
 .bad { color: var(--red); }
 .ok { color: var(--green); }
+
+.opts { margin: 4px 0; font-size: 12px; }
+details.report { background: #efe6cf; border: 1px solid #bfae86; padding: 6px 8px; margin: 10px 0; font-size: 12px; }
+details.report summary { font-weight: bold; cursor: pointer; }
+details.report p { margin: 4px 0; }
