@@ -14,7 +14,15 @@ This is a playable prototype of the core systems: air allocation, the Malta/conv
 
 ## Download
 
-Every push to `main` builds the Windows installer and a portable exe. You'll find them under **Actions → latest run → Artifacts**. Tagging a version (`git tag v0.1.0 && git push --tags`) publishes them as a GitHub Release.
+Every push to `main` builds the Windows installer, a portable exe, and a Mac app (Intel build; it also runs on Apple Silicon through Rosetta). You'll find them under **Actions → latest run → Artifacts**. Tagging a version (`git tag v0.1.0 && git push --tags`) publishes them as a GitHub Release.
+
+### First launch on a Mac
+
+The app isn't signed with an Apple developer certificate, so macOS blocks it the first time. Drag it into Applications, then either right-click it → **Open** → **Open**, or run:
+
+```bash
+xattr -cr "/Applications/Desert Command.app"
+```
 
 ## Develop
 
@@ -23,7 +31,8 @@ npm install
 npm test                      # headless multiplayer test
 npm run server                # host without Electron, at http://127.0.0.1:47430
 npm start                     # run the desktop app
-node scripts/fetch-cloudflared.mjs && npm run dist   # build the Windows exe locally
+node scripts/fetch-cloudflared.mjs && npm run dist          # Windows exe
+node scripts/fetch-cloudflared.mjs mac && npm run dist:mac  # Mac app
 ```
 
 ## Layout

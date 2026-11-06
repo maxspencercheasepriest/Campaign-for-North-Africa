@@ -12,7 +12,8 @@
     "start": "electron .",
     "server": "node src/server/standalone.js",
     "test": "node --test test/*.test.js",
-    "dist": "electron-builder --win --publish never"
+    "dist": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --x64 --publish never"
   },
   "dependencies": {
     "ws": "^8.18.0"
@@ -54,6 +55,27 @@
     },
     "portable": {
       "artifactName": "DesertCommand-Portable-${version}.exe"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.strategy-games",
+      "identity": null
+    },
+    "dmg": {
+      "artifactName": "DesertCommand-${version}-mac.dmg"
     }
   }
 }
