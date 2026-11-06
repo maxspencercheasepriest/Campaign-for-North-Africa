@@ -14,7 +14,7 @@ This is a playable prototype of the core systems: air allocation, the Malta/conv
 
 ## Download
 
-Every push to `main` builds the Windows installer, a portable exe, and a Mac app (Intel build; it also runs on Apple Silicon through Rosetta). You'll find them under **Actions → latest run → Artifacts**. Tagging a version (`git tag v0.1.0 && git push --tags`) publishes them as a GitHub Release.
+Every push to `main` builds the Windows installer, a portable exe, and a universal Mac app (runs natively on Intel and Apple Silicon M-series Macs). You'll find them under **Actions → latest run → Artifacts**. Tagging a version (`git tag v0.1.0 && git push --tags`) publishes them as a GitHub Release.
 
 ### First launch on a Mac
 

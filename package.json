@@ -13,7 +13,7 @@
     "server": "node src/server/standalone.js",
     "test": "node --test test/*.test.js",
     "dist": "electron-builder --win --publish never",
-    "dist:mac": "electron-builder --mac --x64 --publish never"
+    "dist:mac": "electron-builder --mac --universal --publish never"
   },
   "dependencies": {
     "ws": "^8.18.0"
@@ -61,21 +61,22 @@
         {
           "target": "dmg",
           "arch": [
-            "x64"
+            "universal"
           ]
         },
         {
           "target": "zip",
           "arch": [
-            "x64"
+            "universal"
           ]
         }
       ],
       "category": "public.app-category.strategy-games",
-      "identity": null
+      "identity": "-",
+      "x64ArchFiles": "Contents/Resources/bin/cloudflared"
     },
     "dmg": {
-      "artifactName": "DesertCommand-${version}-mac.dmg"
+      "artifactName": "DesertCommand-${version}-mac-universal.dmg"
     }
   }
 }
