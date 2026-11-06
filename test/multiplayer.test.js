@@ -6,6 +6,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 import WebSocket from 'ws';
 import { startServer } from '../src/server/server.js';
+import { gameMap } from '../src/server/engine.js';
+import { stepCost } from '../src/shared/rules.js';
+import { neighbours, key } from '../src/shared/hex.js';
+import { hexFromName } from '../src/shared/hexnames.js';
 
 function client(url, name, hostToken) {
   const ws = new WebSocket(url.replace('http', 'ws') + '/ws');
@@ -81,17 +85,18 @@ test('lobby, seats, fog of war and a full turn of stages', async () => {
   assert.equal(ally.state.canAct, true);
   assert.equal(host.state.canAct, false);
   const arm = ally.state.game.units.find((u) => u.id === 'cw-7arm');
-  ally.send({ type: 'action', action: 'move', unitId: arm.id, path: [[arm.pos[0] - 1, arm.pos[1]]] });
+  const dest = neighbours(...arm.pos).find((h) => stepCost(gameMap(), arm.pos, h, { motorised: true }) && !ally.state.game.units.some((u) => key(...u.pos) === key(...h)));
+  ally.send({ type: 'action', action: 'move', unitId: arm.id, path: [dest] });
   await settle();
   const armAfter = ally.state.game.units.find((u) => u.id === 'cw-7arm');
-  assert.deepEqual(armAfter.pos, [arm.pos[0] - 1, arm.pos[1]]);
+  assert.deepEqual(armAfter.pos, dest);
   assert.ok(armAfter.cpUsed > 0);
   ally.send({ type: 'action', action: 'endPhase' });
   await settle();
 
   // Truck convoy phase belongs to the Rear Area seat; empty, so the C-in-C (host) acts.
   assert.equal(host.state.game.step, 'trucks');
-  const matruh = Object.keys(host.state.game.dumps).find((k) => host.state.game.dumps[k].side === 'cw' && k !== '62,3');
+  const matruh = key(...hexFromName('D3714'));
   const ind = host.state.game.units.find((u) => u.id === 'cw-4ind');
   host.send({ type: 'submit', orders: { transfers: [{ from: matruh, to: ind.pos.join(','), res: 'water', amount: 10 }] } });
   await settle();

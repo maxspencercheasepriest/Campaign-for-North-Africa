@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGame, submitOrders, act, gameMap } from '../src/server/engine.js';
 import { actual } from '../src/server/combat.js';
-import { key } from '../src/shared/hex.js';
+import { key, neighbours } from '../src/shared/hex.js';
+import { hexFromName } from '../src/shared/hexnames.js';
 
 function setup(seed) {
   const g = createGame();
@@ -14,8 +15,9 @@ function setup(seed) {
   // Put the 63rd Cirene next to the 4th Indian on clear ground, away from everything else.
   const att = g.units.find((u) => u.id === 'it-63');
   const def = g.units.find((u) => u.id === 'cw-4ind');
-  att.pos = [30, 12]; def.pos = [31, 12];
-  for (const h of [att.pos, def.pos, [32, 12], [32, 13], [33, 12]]) gameMap().tiles[key(...h)].t = 'clear';
+  att.pos = hexFromName('C2010'); def.pos = neighbours(...att.pos)[1];
+  for (const h of [att.pos, def.pos, ...neighbours(...def.pos)]) gameMap().tiles[key(...h)] = { t: 'clear' };
+  for (const ek of Object.keys(gameMap().hexsides)) if (ek.includes(key(...def.pos))) delete gameMap().hexsides[ek];
   g.seg.mode = 'combat';
   return { g, att, def };
 }
@@ -38,7 +40,7 @@ test('an assault runs the full procedure and charges CP, ammo and losses', () =>
     assert.ok(att.str <= before.att && (g.units.includes(def) ? def.str <= before.def : true));
     assert.equal(att.ammo, before.attAmmo - 1);
     // Can't attack the same hex twice in a segment.
-    if (g.units.includes(def) && def.pos[0] === 31 && def.pos[1] === 12) {
+    if (g.units.includes(def) && key(...def.pos) === key(...neighbours(...hexFromName('C2010'))[1])) {
       assert.match(act(g, 'axis', { action: 'attack', targetId: def.id, attackerIds: [att.id] }), /already been attacked/);
     }
   }

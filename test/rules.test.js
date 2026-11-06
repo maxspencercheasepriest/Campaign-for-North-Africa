@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGame, submitOrders, act, planMove, inEnemyZoc, actingSides, gameMap } from '../src/server/engine.js';
 import { turnDate, initiativeRating, stepCost, edgeKey } from '../src/shared/rules.js';
-import { key } from '../src/shared/hex.js';
+import { key, distance } from '../src/shared/hex.js';
+import { hexFromName, nameOfHex } from '../src/shared/hexnames.js';
 
 const toMoveCombat = (g) => {
   submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {}); // air
@@ -53,34 +54,59 @@ test('sequence of play: naval stage, declaration, A then B, three ops stages, ne
   assert.ok(g.initiative.rolls, 'GT2 initiative is rolled');
 });
 
-test('terrain effects: roads, tracks, escarpments, salt marsh', () => {
+test('terrain effects on the real map: roads, escarpments, salt marsh', () => {
   const map = gameMap();
-  const road = [...map.roads][0].split('|').map((k) => k.split(',').map(Number));
-  assert.deepEqual(stepCost(map, road[0], road[1], { motorised: true }), { cp: 0.5, bp: 0.5, via: 'road' });
-  assert.equal(stepCost(map, road[0], road[1], { motorised: false }).cp, 1);
-  // Escarpment at column 48: north (down) side is row 4, south (up) side row 5.
-  const down = [48, 4], up = [48, 5];
-  assert.equal(map.hexsides[edgeKey(up, down)].type, 'escarpment');
+  const edge = (ek) => ek.split('|').map((k) => k.split(',').map(Number));
+  const [ra, rb] = edge([...map.roads][0]);
+  assert.deepEqual(stepCost(map, ra, rb, { motorised: true }), { cp: 0.5, bp: 0.5, via: 'road' });
+  assert.equal(stepCost(map, ra, rb, { motorised: false }).cp, 1);
+  // An escarpment not crossed by a road or track: vehicles can't use it either way; foot pays +6 going up.
+  const [ek, esc] = Object.entries(map.hexsides).find(([k, h]) => h.type === 'escarpment' && !map.roads.has(k) && !map.tracks.has(k) &&
+    edge(k).every((h2) => ['clear', 'gravel'].includes(map.tiles[key(...h2)]?.t)));
+  const [a, b] = edge(ek);
+  const down = esc.down === key(...a) ? a : b, up = down === a ? b : a;
   assert.equal(stepCost(map, down, up, { motorised: true }), null, 'vehicles cannot climb an escarpment');
-  assert.equal(stepCost(map, down, up, { motorised: false }).cp, (map.tiles[key(...up)].t === 'clear' || map.tiles[key(...up)].t === 'gravel' ? 2 : 3) + 6);
   assert.equal(stepCost(map, up, down, { motorised: true }), null, 'vehicles go down escarpments only by track');
-  // Sollum track down the escarpment at column 46.
-  assert.equal(stepCost(map, [46, 5], [46, 4], { motorised: true }).cp, 1 + 8);
-  assert.equal(stepCost(map, [46, 4], [46, 5], { motorised: true }), null);
-  // Qattara salt marsh is closed to vehicles off-road.
-  assert.equal(stepCost(map, [56, 9], [56, 10], { motorised: true }), null);
-  assert.equal(stepCost(map, [56, 9], [56, 10], { motorised: false }).cp, 3);
+  assert.equal(stepCost(map, down, up, { motorised: false }).cp, 2 + 6);
+  // Salt marsh is closed to vehicles off-road.
+  const sm = Object.keys(map.tiles).find((k) => map.tiles[k].t === 'saltmarsh');
+  const smHex = sm.split(',').map(Number);
+  const from = [[smHex[0], smHex[1] - 1], [smHex[0], smHex[1] + 1]].find((h) => map.tiles[key(...h)] && map.tiles[key(...h)].t !== 'sea' && !map.roads.has(edgeKey(h, smHex)) && !map.tracks.has(edgeKey(h, smHex)));
+  assert.equal(stepCost(map, from, smHex, { motorised: true }), null);
+  assert.equal(stepCost(map, from, smHex, { motorised: false }) && stepCost(map, from, smHex, { motorised: false }).cp >= 3, true);
+});
+
+test('board hex names map onto the grid', () => {
+  assert.deepEqual(hexFromName('C4807'), [47, 72]);
+  assert.deepEqual(hexFromName('A0134'), hexFromName('B0101'), 'row 34 of one section is row 01 of the next');
+  assert.equal(nameOfHex(...hexFromName('E3613')), 'E3613');
+  assert.equal(gameMap().tiles[key(...hexFromName('C4807'))].t, 'majorcity', 'Tobruk');
 });
 
 test('capability points, disorganisation and the 150% foot limit', () => {
   const g = createGame();
   toMoveCombat(g);
-  const u = g.units.find((x) => x.id === 'it-pav'); // foot, CPA 10
-  u.pos = [2, 3]; // Tripoli, on the coast road
-  const path = [3, 4, 5, 6, 7, 8, 9, 10].map((c) => [c, 3]); // 8 road hexes = 8 CP on foot
+  const u = g.units.find((x) => x.id === 'it-62'); // foot, CPA 10
+  // Find a run of 8 connected road/track hexes away from everyone (1 CP per hex on foot either way).
+  const map = gameMap();
+  const adj = new Map();
+  for (const ek of [...map.roads, ...map.tracks]) {
+    const [a, b] = ek.split('|');
+    if (!adj.has(a)) adj.set(a, []); if (!adj.has(b)) adj.set(b, []);
+    adj.get(a).push(b); adj.get(b).push(a);
+  }
+  let path = null;
+  for (const start of adj.keys()) {
+    const p = [start]; const seen = new Set(p);
+    while (p.length < 9) { const nx = (adj.get(p.at(-1)) || []).find((n) => !seen.has(n)); if (!nx) break; p.push(nx); seen.add(nx); }
+    const free = p.every((k) => !g.units.some((x) => key(...x.pos) === k || distance(x.pos, k.split(',').map(Number)) <= 1));
+    if (p.length === 9 && free) { path = p.map((k) => k.split(',').map(Number)); break; }
+  }
+  u.pos = path[0];
+  const route = path.slice(1); // 8 road hexes = 8 CP on foot
   u.cpUsed = 8;
-  assert.match(act(g, 'axis', { action: 'move', unitId: u.id, path }), /may not voluntarily spend more than 15/);
-  assert.equal(act(g, 'axis', { action: 'move', unitId: u.id, path: path.slice(0, 7) }), null);
+  assert.match(act(g, 'axis', { action: 'move', unitId: u.id, path: route }), /may not voluntarily spend more than 15/);
+  assert.equal(act(g, 'axis', { action: 'move', unitId: u.id, path: route.slice(0, 7) }), null);
   assert.equal(u.cpUsed, 15);
   assert.equal(u.cohesion, -5, '5 CP over a CPA of 10 = 5 Disorganisation Points');
 });

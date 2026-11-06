@@ -46,7 +46,7 @@ All ⬜ for now. The placeholder air step and supply rules stand in for them.
 
 | Scenario | Status |
 |---|---|
-| 60.22 Graziani's Offensive (GT1–6) | 🟡 Turn limits and GT1 initiative are in. The map, setup hexes and victory conditions (60.71) still need the real map. |
+| 60.22 Graziani's Offensive (GT1–6) | 🟡 Turn limits, GT1 initiative, formation-level deployment hexes (60.31, 60.41) and initial dumps (60.34, 60.44) are in. Not yet: battalion-level setup, trucks, air and fleet setup, victory conditions (60.71). |
 
 ## Notes on the charts
 
@@ -59,6 +59,6 @@ Every column of every dice table is checked automatically to cover all 36 result
 
 ## Data still to enter
 
-- **Map:** the five map sections are in the PDF scan. They need digitising (terrain, hexsides, roads and tracks, towns), and the game needs the real hex numbering (e.g. C4807).
+- **Map:** 🟡 all five sections are digitised automatically by `tools/map/` (OCR of hex numbers → grid fit → colour classification of each hex and hexside). That gives about 7,000 hexes and about 2,000 hexside features, and the game uses the board's hex numbers (Tobruk = C4807). Known weak spots: the coast road is mostly read as a track; hexes split between two terrains take whichever covers the centre; villages, oases, airfields and minefields aren't read yet. Fixes go in `src/shared/mapfixes.js`.
 - **Units:** the Organisation-at-Arrival charts. Italian and Commonwealth weapon ratings are entered; German ones are provisional. Scenario units are built from real weapon types but with approximate compositions.
 - **Reinforcement and withdrawal schedules.**

@@ -1,7 +1,8 @@
 import { key, parseKey, distance, neighbours, hexToPixel, pixelToHex } from '/shared/hex.js';
 import {
-  MAP_COLS, MAP_ROWS, SIDES, SIDE_NAMES, ROLES, ROLE_NAMES, PORTS, VISION_RANGE, buildMap,
+  MAP_COLS, MAP_ROWS, SIDES, SIDE_NAMES, ROLES, ROLE_NAMES, PORTS, LOCATIONS, VISION_RANGE, buildMap,
 } from '/shared/scenario.js';
+import { hexFromName, nameOfHex } from '/shared/hexnames.js';
 import { TERRAIN, HEXSIDES, STACKING_POINTS, NON_MOTORISED_VOLUNTARY_LIMIT, CP, stepCost, edgeKey } from '/shared/rules.js';
 
 const $ = (id) => document.getElementById(id);
@@ -125,8 +126,8 @@ const mySide = () => S.you.side;
 const myUnits = () => (S.game.units || []).filter((u) => u.side === mySide());
 const enemyUnits = () => (S.game.units || []).filter((u) => u.side !== mySide());
 const unitsAt = (c, r) => (S.game.units || []).filter((u) => u.pos[0] === c && u.pos[1] === r);
-const portName = (k) => PORTS.find((p) => key(p.col, p.row) === k)?.name;
-const hexLabel = (k) => portName(k) || `hex ${k}`;
+const portName = (k) => LOCATIONS.find((l) => l.hexes.some((h) => key(...h) === k))?.name;
+const hexLabel = (k) => portName(k) || nameOfHex(...parseKey(k));
 const isCombat = (u) => u.type !== 'hq';
 const sp = (u) => STACKING_POINTS[u.size] ?? 0;
 const myPhase = () => S.game.step === 'movecombat' && S.game.phasing === mySide();
@@ -433,7 +434,8 @@ $('chatForm').addEventListener('submit', (e) => {
 
 const canvas = $('map');
 const ctx = canvas.getContext('2d');
-const view = { size: 22, ox: 30, oy: 30 };
+// The board's grid runs with north to the right; we draw it rotated so north is up.
+const view = { size: 16, ox: 0, oy: 0, placed: false };
 const COLORS = { sea: '#7d9bab', clear: '#ead9ad', gravel: '#dcc795', saltmarsh: '#cfc3a6', heavyveg: '#a9b57f', rough: '#c3aa78', mountain: '#a48b62', delta: '#b8c38a', desert: '#f0dc9c', majorcity: '#cbb8a0', swamp: '#9fb39a' };
 const SIDE_COLORS = { axis: { fill: '#9a9f86', edge: '#3e4434' }, cw: { fill: '#d2ad6e', edge: '#5b3d16' } };
 const NATION_COLORS = { it: '#a6ad7f', de: '#8f959b', uk: '#d2ad6e', in: '#c99d5f', au: '#d8b77a', nz: '#c7a76f' };
@@ -452,12 +454,20 @@ new ResizeObserver(resize).observe($('mapWrap'));
 function hexPath(cx, cy, s) {
   ctx.beginPath();
   for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 3) * i;
+    const a = (Math.PI / 3) * i + Math.PI / 6;
     ctx[i ? 'lineTo' : 'moveTo'](cx + s * Math.cos(a), cy + s * Math.sin(a));
   }
   ctx.closePath();
 }
-const centre = (c, r) => { const p = hexToPixel(c, r, view.size); return { x: p.x + view.ox, y: p.y + view.oy }; };
+const centre = (c, r) => { const p = hexToPixel(c, r, view.size); return { x: p.y + view.ox, y: -p.x + view.oy }; };
+function placeView() {
+  // Start centred on the Libyan-Egyptian frontier.
+  const [c, r] = hexFromName('C4021');
+  const p = hexToPixel(c, r, view.size);
+  const w = canvas.width / devicePixelRatio, h = canvas.height / devicePixelRatio;
+  view.ox = w / 2 - p.y; view.oy = h / 2 + p.x;
+  view.placed = true;
+}
 
 // Endpoints of the shared side between two adjacent hexes.
 function sharedEdge(a, b) {
@@ -472,7 +482,10 @@ let reachCache = null;
 
 function drawMap() {
   if (!S?.game) return;
+  if (!view.placed && canvas.width) placeView();
   const s = view.size;
+  const VW = canvas.width / devicePixelRatio, VH = canvas.height / devicePixelRatio;
+  const onScreen = (x, y) => x > -s * 3 && y > -s * 3 && x < VW + s * 3 && y < VH + s * 3;
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   ctx.fillStyle = '#5f7f90';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -484,17 +497,22 @@ function drawMap() {
   for (let c = 0; c < MAP_COLS; c++) {
     for (let r = 0; r < MAP_ROWS; r++) {
       const t = TILES[key(c, r)];
+      if (!t) continue;
       const { x, y } = centre(c, r);
+      if (!onScreen(x, y)) continue;
       hexPath(x, y, s);
       ctx.fillStyle = COLORS[t.t] || '#e0d0a0';
       ctx.fill();
-      if (t.t === 'saltmarsh') { ctx.strokeStyle = '#a8946a'; ctx.lineWidth = 1; for (let i = -s; i < s; i += 5) { ctx.beginPath(); ctx.moveTo(x + i, y - s * 0.6); ctx.lineTo(x + i + 6, y + s * 0.6); ctx.stroke(); } }
+      if (t.t === 'saltmarsh' && s >= 10) { ctx.strokeStyle = '#c9b45a'; ctx.lineWidth = 1; ctx.beginPath(); for (let i = -s * 0.6; i < s * 0.6; i += 5) { ctx.moveTo(x + i, y - s * 0.5); ctx.lineTo(x + i + 4, y + s * 0.5); } ctx.stroke(); }
+      if (t.t === 'gravel' && s >= 10) { ctx.strokeStyle = '#d9a21c'; ctx.lineWidth = 1; for (const [dx, dy] of [[-0.3, -0.2], [0.25, -0.3], [0, 0.25], [-0.35, 0.3], [0.35, 0.2]]) { ctx.beginPath(); ctx.arc(x + dx * s, y + dy * s, s * 0.12, 0, Math.PI * 2); ctx.stroke(); } }
       if (t.t === 'mountain') { ctx.fillStyle = '#7d6748'; ctx.beginPath(); ctx.moveTo(x - s * 0.4, y + s * 0.3); ctx.lineTo(x, y - s * 0.35); ctx.lineTo(x + s * 0.4, y + s * 0.3); ctx.fill(); }
       if (t.t !== 'sea' && !visible(c, r)) { hexPath(x, y, s); ctx.fillStyle = 'rgba(40,30,15,0.16)'; ctx.fill(); }
-      hexPath(x, y, s);
-      ctx.strokeStyle = 'rgba(80,60,30,0.22)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
+      if (s >= 9) {
+        hexPath(x, y, s);
+        ctx.strokeStyle = 'rgba(80,60,30,0.22)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
     }
   }
   // Reachable hexes with CP cost
@@ -513,7 +531,19 @@ function drawMap() {
   // Hexsides
   for (const [ek, h] of Object.entries(MAP.hexsides)) {
     const [a, b] = ek.split('|').map(parseKey);
+    const ca = centre(...a);
+    if (!onScreen(ca.x, ca.y)) continue;
     const [p1, p2, n] = sharedEdge(a, b);
+    if (h.type === 'slope' || h.type === 'ridge') {
+      ctx.strokeStyle = h.type === 'ridge' ? '#8a6a1c' : '#a8862e'; ctx.lineWidth = h.type === 'ridge' ? 3.5 : 2.5;
+      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+      continue;
+    }
+    if (h.type === 'minorRiver' || h.type === 'majorRiver') {
+      ctx.strokeStyle = '#3d86c6'; ctx.lineWidth = h.type === 'majorRiver' ? 4 : 2.5;
+      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+      continue;
+    }
     if (h.type === 'escarpment') {
       // Ticks point towards the down side.
       const down = parseKey(h.down);
@@ -527,7 +557,7 @@ function drawMap() {
       }
       ctx.stroke();
     } else if (h.type === 'wadi') {
-      ctx.strokeStyle = '#4e7a96'; ctx.lineWidth = 2; ctx.setLineDash([3, 2]); ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = '#6f9a72'; ctx.lineWidth = 2.5; ctx.setLineDash([]); ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); ctx.setLineDash([]);
     }
   }
   // Roads and tracks
@@ -536,22 +566,30 @@ function drawMap() {
     for (const ek of set) {
       const [a, b] = ek.split('|').map(parseKey);
       const A = centre(...a), B = centre(...b);
+      if (!onScreen(A.x, A.y)) continue;
       ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y);
     }
     ctx.stroke(); ctx.setLineDash([]);
   };
   drawEdges(MAP.roads, '#7a1f12', 2.5, []);
   drawEdges(MAP.tracks, '#5d4a2c', 1.5, [4, 3]);
+  drawEdges(MAP.rails, '#2f7fbf', 1.5, [2, 2]);
 
-  // Ports
-  for (const p of PORTS) {
-    const { x, y } = centre(p.col, p.row);
-    const owner = S.game.portOwners[p.id];
-    ctx.beginPath(); ctx.arc(x, y, s * 0.28, 0, Math.PI * 2);
-    ctx.fillStyle = SIDE_COLORS[owner].fill; ctx.fill();
-    ctx.lineWidth = 2; ctx.strokeStyle = SIDE_COLORS[owner].edge; ctx.stroke();
-    ctx.font = `bold ${Math.max(9, s * 0.5)}px Georgia, serif`; ctx.textAlign = 'center'; ctx.fillStyle = '#1e2a33';
-    ctx.fillText(p.name, x, y - s * 0.95);
+  // Important locations (ports, cities, garrisons, victory hexes)
+  for (const l of LOCATIONS) {
+    const [c0, r0] = l.hexes[0];
+    const { x, y } = centre(c0, r0);
+    if (!onScreen(x, y)) continue;
+    const owner = S.game.portOwners[l.id];
+    for (const h of l.hexes) {
+      const q = centre(...h);
+      ctx.beginPath(); ctx.arc(q.x, q.y, s * (l.city ? 0.32 : 0.22), 0, Math.PI * 2);
+      ctx.fillStyle = SIDE_COLORS[owner]?.fill || '#ccc'; ctx.fill();
+      ctx.lineWidth = l.victory ? 2.5 : 1.5; ctx.strokeStyle = l.victory ? '#a3241a' : SIDE_COLORS[owner]?.edge || '#333'; ctx.stroke();
+    }
+    ctx.font = `bold ${Math.max(9, s * 0.55)}px Georgia, serif`; ctx.textAlign = 'center';
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,250,235,0.85)'; ctx.strokeText(l.name, x, y - s * 0.9);
+    ctx.fillStyle = '#1e2a33'; ctx.fillText(l.name, x, y - s * 0.9);
   }
   // Dumps
   for (const [k, d] of Object.entries(S.game.dumps)) {
@@ -624,7 +662,7 @@ canvas.addEventListener('wheel', (e) => {
   const r = canvas.getBoundingClientRect();
   const mx = e.clientX - r.left, my = e.clientY - r.top;
   const old = view.size;
-  view.size = Math.min(60, Math.max(10, view.size * (e.deltaY < 0 ? 1.12 : 0.89)));
+  view.size = Math.min(60, Math.max(3, view.size * (e.deltaY < 0 ? 1.12 : 0.89)));
   view.ox = mx - ((mx - view.ox) * view.size) / old;
   view.oy = my - ((my - view.oy) * view.size) / old;
   drawMap();
@@ -632,7 +670,8 @@ canvas.addEventListener('wheel', (e) => {
 
 function eventHex(e) {
   const r = canvas.getBoundingClientRect();
-  return pixelToHex(e.clientX - r.left - view.ox, e.clientY - r.top - view.oy, view.size);
+  const sx = e.clientX - r.left - view.ox, sy = e.clientY - r.top - view.oy;
+  return pixelToHex(-sy, sx, view.size); // undo the north-up rotation
 }
 
 function showHexInfo([c, r]) {
@@ -640,12 +679,12 @@ function showHexInfo([c, r]) {
   if (!t) { $('hexInfo').textContent = ''; return; }
   const us = unitsAt(c, r);
   const d = S.game.dumps[key(c, r)];
-  const port = PORTS.find((p) => p.col === c && p.row === r);
+  const port = LOCATIONS.find((l) => l.hexes.some((h) => h[0] === c && h[1] === r));
   const reach = reachCache?.get(key(c, r));
   const terr = TERRAIN[t.t];
   $('hexInfo').innerHTML = [
-    `<b>${key(c, r)}</b> ${esc(terr.label)} <span class="muted">(CP ${terr.np === Infinity ? 'P' : terr.np}/${terr.mp === Infinity ? 'P' : terr.mp}, stack ${terr.stack})</span>`,
-    port ? `${esc(port.name)} (${sideName(S.game.portOwners[port.id])})` : '',
+    `<b>${nameOfHex(c, r)}</b> ${esc(terr.label)} <span class="muted">(CP ${terr.np === Infinity ? 'P' : terr.np}/${terr.mp === Infinity ? 'P' : terr.mp}, stack ${terr.stack})</span>`,
+    port ? `${esc(port.name)} (${sideName(S.game.portOwners[port.id])}${port.port ? ', port' : ''}${port.city ? ', major city' : ''}${port.victory ? ', victory location' : ''})` : '',
     ...us.map((u) => `${esc(u.name)} · ${u.str} steps${u.side === mySide() ? ` · CP ${fmtCP(u.cpUsed)}/${u.cpa} · coh ${u.cohesion}` : ''}`),
     d && !d.spotted && d.side === mySide() ? `Dump: fuel ${Math.floor(d.fuel)}, water ${Math.floor(d.water)}, ammo ${Math.floor(d.ammo)}` : d ? 'Enemy dump' : '',
     reach ? `Move here: ${fmtCP(reach.cost)} CP${reach.stop ? ' · enters enemy ZOC (must stop)' : ''}` : '',
@@ -673,3 +712,22 @@ function clickHex([c, r]) {
   selected = null;
   renderOrders(); drawMap();
 }
+
+// Small hook used by automated UI tests and screenshot scripts.
+window.__desertCommand = {
+  reachable() { return reachCache ? [...reachCache.entries()].map(([k, v]) => ({ name: nameOfHex(...parseKey(k)), cost: v.cost, stop: v.stop })) : []; },
+  unitHex(id) { const u = (S?.game?.units || []).find((x) => x.id === id); return u ? nameOfHex(...u.pos) : null; },
+  neighbours(name) { return neighbours(...hexFromName(name)).map((h) => nameOfHex(...h)); },
+  screenOf(name) {
+    const r = canvas.getBoundingClientRect();
+    const p = centre(...hexFromName(name));
+    return { x: p.x + r.left, y: p.y + r.top };
+  },
+  centreOn(name, size) {
+    if (size) view.size = size;
+    const [c, rr] = hexFromName(name);
+    const p = hexToPixel(c, rr, view.size);
+    view.ox = canvas.width / devicePixelRatio / 2 - p.y; view.oy = canvas.height / devicePixelRatio / 2 + p.x; view.placed = true;
+    drawMap();
+  },
+};

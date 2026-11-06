@@ -13,7 +13,7 @@
 
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
 import {
-  SIDES, PORTS, MAP_COLS, MAP_ROWS, SCENARIO,
+  SIDES, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, SCENARIO,
   buildMap, initialUnits, initialDumps, initialPortOwners, REINFORCEMENTS,
   AIR_POINTS, TRUCK_CAPACITY, CONVOY, FUEL_EVAPORATION, SUPPLY_RANGE, VISION_RANGE,
 } from '../shared/scenario.js';
@@ -44,7 +44,7 @@ export const gameMap = () => (mapCache ||= buildMap());
 
 export function createGame(options = {}) {
   const g = {
-    version: 3,
+    version: 4,
     scenario: SCENARIO.id,
     turn: SCENARIO.firstTurn,
     opStage: 0,
@@ -180,7 +180,7 @@ function endOpStage(g) {
 function scenarioWinner(g) {
   // Placeholder until the scenario victory conditions (60.71) are implemented:
   // Axis wins Graziani's Offensive by holding Sidi Barrani or anything further east.
-  const east = ['barrani', 'matruh', 'alamein', 'alexandria'];
+  const east = ['barrani', 'matruh', 'alexandria'];
   return east.some((p) => g.portOwners[p] === 'axis') ? 'axis' : 'cw';
 }
 
@@ -527,11 +527,11 @@ function removeDestroyed(g) {
 }
 
 function updateOwnership(g) {
-  for (const p of PORTS) {
-    const here = unitsAt(g, [p.col, p.row]);
-    if (here.length && here.every((u) => u.side !== g.portOwners[p.id])) {
-      g.portOwners[p.id] = here[0].side;
-      log(g, 'all', `${p.name} has been taken by the ${here[0].side === 'axis' ? 'Axis' : 'Commonwealth'}.`);
+  for (const l of LOCATIONS) {
+    const here = l.hexes.flatMap((h) => unitsAt(g, h)).filter((u) => isCombatUnit(u));
+    if (here.length && here.every((u) => u.side !== g.portOwners[l.id])) {
+      g.portOwners[l.id] = here[0].side;
+      log(g, 'all', `${l.name} has been taken by the ${here[0].side === 'axis' ? 'Axis' : 'Commonwealth'}.`);
     }
   }
   for (const [k, d] of Object.entries(g.dumps)) {
@@ -575,9 +575,10 @@ function endGameTurn(g) {
   removeDestroyed(g);
 
   for (const r of REINFORCEMENTS.filter((x) => x.turn === g.turn + 1)) {
-    const p = PORTS.find((x) => x.id === r.port);
+    const p = LOCATIONS.find((x) => x.id === r.location);
     if (g.portOwners[p.id] !== r.unit.side) continue;
-    const spot = [[p.col, p.row], ...neighbours(p.col, p.row)].find((h) =>
+    const [pc, pr] = p.hexes[0];
+    const spot = [[pc, pr], ...neighbours(pc, pr)].find((h) =>
       gameMap().tiles[key(...h)] && gameMap().tiles[key(...h)].t !== 'sea' &&
       hexSP(unitsAt(g, h)) + (STACKING_POINTS[r.unit.size] ?? 0) <= stackingLimit(gameMap(), h));
     if (!spot) continue;
@@ -585,8 +586,8 @@ function endGameTurn(g) {
     log(g, r.unit.side, `Reinforcements: ${r.unit.name} arrives at ${p.name}.`);
   }
 
-  if (g.portOwners.alexandria === 'axis') g.winner = 'axis';
-  else if (g.portOwners.tripoli === 'cw') g.winner = 'cw';
+  if (g.portOwners.alexandria === 'axis' && g.portOwners.cairo === 'axis') g.winner = 'axis';
+  else if (g.portOwners.benghazi === 'cw' && g.portOwners.agheila === 'cw') g.winner = 'cw';
 }
 
 // ---------- Views (fog of war) ----------
