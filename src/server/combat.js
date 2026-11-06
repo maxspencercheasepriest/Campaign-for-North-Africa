@@ -72,6 +72,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
   const probe = !!opts.probe;
   const artyForward = opts.artilleryForward !== false;
   const tankRole = opts.tankRole || 'assault';
+  const dOpt = opts.defence || { artilleryForward: false, tankRole: 'antiArmour', retreat: new Set() };
   const terr = TERRAIN[map.tiles[key(...targetPos)].t];
   const crossings = attackers.map((u) => crossing(map, u.pos, targetPos)).filter(Boolean);
 
@@ -98,16 +99,19 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
   const attArty = att.filter((x) => W(x.e).kind === 'gun');
   const attAT = att.filter((x) => W(x.e).kind === 'at' || (W(x.e).kind === 'tank' && tankRole === 'antiArmour'));
   const attCA = att.filter((x) => W(x.e).kind === 'inf' || (W(x.e).kind === 'tank' && tankRole === 'assault') || (W(x.e).kind === 'gun' && artyForward));
-  const defArty = def.filter((x) => W(x.e).kind === 'gun'); // defending artillery is placed Back (automatic)
-  const defAT = def.filter((x) => W(x.e).kind === 'at' || W(x.e).kind === 'tank');
-  const defCA = def.filter((x) => ['inf', 'tank', 'at'].includes(W(x.e).kind));
+  // Defender's dispositions [12.1, 14.26]: guns Forward or Back; tanks fire anti-armour or join the close assault.
+  // Anti-tank guns always fire anti-armour; a TOE point is never used for both.
+  let defArty = def.filter((x) => W(x.e).kind === 'gun');
+  let defAT = def.filter((x) => W(x.e).kind === 'at' || (W(x.e).kind === 'tank' && dOpt.tankRole !== 'assault'));
+  let defCA = def.filter((x) => W(x.e).kind === 'inf' || (W(x.e).kind === 'tank' && dOpt.tankRole === 'assault') || (W(x.e).kind === 'gun' && dOpt.artilleryForward));
+  say(`Defender: artillery ${dOpt.artilleryForward ? 'Forward' : 'Back'}, tanks ${dOpt.tankRole === 'assault' ? 'in the close assault' : 'firing anti-armour'}${dOpt.retreat.size ? `, ${dOpt.retreat.size} unit(s) to retreat before assault if able` : ''}.`);
 
   // ---- Barrage step [12.0] ----
   const barrage = (firers, targets, targetTerrainShift, who) => {
     if (!firers.length || !targets.length) return;
     // Forward guns combine; Back guns fire unit by unit [12.13-12.16]. Italians combine only within a hex [12.14].
     const groups = [];
-    if (who === 'att' && artyForward) {
+    if ((who === 'att' && artyForward) || who === 'defFwd') {
       const byHex = new Map();
       for (const f of firers) {
         const k = f.u.nation === 'it' ? key(...f.u.pos) : 'all';
@@ -147,7 +151,32 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
   };
   barrage(attArty, def, shift(terr.combat?.barrage), 'att');
   // Defenders' guns fire back at the attacking hexes (no terrain benefit modelled for the attacker yet).
-  barrage(defArty, att, 0, 'def');
+  barrage(defArty, att, 0, dOpt.artilleryForward ? 'defFwd' : 'def');
+
+  // ---- Retreat Before Assault [13.0]: chosen units that were not pinned fall back before the assault ----
+  let vacatedBeforeAssault = false;
+  if (dOpt.retreat.size) {
+    const pinnedUnit = (u) => def.some((x) => x.u === u && pinned.has(x));
+    const goers = defenders.filter((u) => dOpt.retreat.has(u.id) && u.str > 0);
+    for (const u of goers) {
+      if (pinnedUnit(u)) { say(`${u.name} is pinned by the barrage and cannot retreat before the assault.`); continue; }
+      if (u.cohesion <= -26) { say(`${u.name} is too disorganised to retreat.`); continue; }
+      const before = key(...u.pos);
+      retreatUnits([u], attackers, 2);
+      if (key(...u.pos) === before) { say(`${u.name} has nowhere to retreat to and must stand.`); continue; }
+      say(`${u.name} retreats before the assault to ${key(...u.pos)}.`);
+      // Elements that left take no further part [13.28].
+      for (const list of [def, defArty, defAT, defCA]) for (let i = list.length - 1; i >= 0; i--) if (list[i].u === u) list.splice(i, 1);
+    }
+    const stillThere = defenders.filter((u) => u.str > 0 && u.pos[0] === targetPos[0] && u.pos[1] === targetPos[1]);
+    if (!stillThere.length) {
+      say('The defenders have withdrawn; there is no assault.');
+      vacatedBeforeAssault = true;
+      for (const u of attackers) u.ammo = Math.max(0, u.ammo - 1);
+      for (const l of lines) log(l);
+      return { lines, defendersCleared: true, vacatedBeforeAssault, attackers, defenders };
+    }
+  }
 
   // ---- Anti-armour step [14.0] (simultaneous) ----
   const armourOf = (xs) => xs.filter((x) => W(x.e).ap > 0 && x.e.toe > 0);
@@ -193,7 +222,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
   const defLive = defCA.filter((x) => x.e.toe - (pinned.get(x) || 0) > 0);
   let attRaw = rawOf(attLive, 'off', pinned);
   let defRaw = rawOf(defLive, 'def', pinned);
-  const defRawForLosses = rawOf(def.filter((x) => x.e.toe > 0 && W(x.e).kind !== 'gun'), 'def'); // includes pinned [15.83b]
+  const defRawForLosses = rawOf(def.filter((x) => x.e.toe > 0 && (W(x.e).kind !== 'gun' || dOpt.artilleryForward)), 'def'); // includes pinned [15.83b]
 
   if (defRaw <= 0) {
     // Nothing able to defend: the hex is abandoned [15.29].
@@ -297,7 +326,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
 
   // Losses [15.83].
   const attLossRaw = Math.ceil((aPct / 100) * attRaw);
-  const defLossRaw = overrun ? Math.ceil((dPct / 100) * (defRawForLosses + rawOf(defArty, 'def'))) : Math.floor((dPct / 100) * defRawForLosses);
+  const defLossRaw = overrun ? Math.ceil((dPct / 100) * (defRawForLosses + (dOpt.artilleryForward ? 0 : rawOf(defArty, 'def')))) : Math.floor((dPct / 100) * defRawForLosses);
   const attRemoved = {}, defRemoved = {};
   const attTOEBefore = attackers.reduce((s, u) => s + u.str, 0);
   const defTOEBefore = defenders.reduce((s, u) => s + u.str, 0);
@@ -317,7 +346,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
       removed[`${c.u.id}|${c.e.w}`] = (removed[`${c.u.id}|${c.e.w}`] || 0) + 1;
     }
   };
-  gunLoss(def.filter((x) => W(x.e).kind === 'at' || (overrun && W(x.e).kind === 'gun')), defLossRaw, defRemoved, false);
+  gunLoss(def.filter((x) => W(x.e).kind === 'at' || (W(x.e).kind === 'gun' && (overrun || dOpt.artilleryForward))), defLossRaw, defRemoved, false);
   if (artyForward) gunLoss(attArty.filter((x) => attCA.includes(x)), attLossRaw, attRemoved, true);
   for (const u of [...attackers, ...defenders]) syncStr(u);
 
@@ -351,7 +380,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
 
   finish();
   const cleared = !g.units.some((u) => u.side !== side && u.pos[0] === targetPos[0] && u.pos[1] === targetPos[1] && u.str > 0);
-  return { lines, defendersCleared: cleared, attackers, defenders };
+  return { lines, defendersCleared: cleared, vacatedBeforeAssault, attackers, defenders };
 
   function finish() {
     for (const u of [...attackers, ...defenders]) { u.ammo = Math.max(0, u.ammo - 1); syncStr(u); }

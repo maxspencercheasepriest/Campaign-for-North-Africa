@@ -10,7 +10,7 @@ A team-based online game of the Western Desert campaign, 1940–43. It's a digit
 
 ## Screenshots
 
-**The whole board:** all five map sections, from el Agheila to the Nile, digitised from the scanned map sheets.
+**The whole board:** all five map sections, from el Agheila to the Nile, digitised from the scanned map sheets, with the coast road traced through its towns.
 ![Whole map](docs/screenshots/map-overview.png)
 
 **The frontier, September 1940:** the Italian 10th Army at Bardia, Sollum and Sidi Omar facing the 7th Support Group at Halfaya, set up from the scenario's deployment hexes.
@@ -18,6 +18,12 @@ A team-based online game of the Western Desert campaign, 1940–43. It's a digit
 
 **Movement:** the 1st Libyan Division is selected. Each hex shows the capability points to reach it, using the Terrain Effects Chart. Red hexes are enemy zones of control, where the unit must stop, and orange hexes cost more than the unit's allowance (it can still go, but loses cohesion).
 ![Movement](docs/screenshots/movement.png)
+
+**Reaction:** when the Italians close in, the Commonwealth front-line commander gets the chance to pull motorised units back, mid-way through the Axis turn.
+![Reaction](docs/screenshots/reaction.png)
+
+**Under attack:** the defender chooses whether the guns go Forward or Back, what the tanks do, and which units retreat before the assault.
+![Defence](docs/screenshots/defence.png)
 
 **Combat:** barrage, then anti-armour fire, then morale and close assault, with every die roll reported.
 ![Combat](docs/screenshots/combat.png)

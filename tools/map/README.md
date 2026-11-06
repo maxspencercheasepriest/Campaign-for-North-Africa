@@ -9,3 +9,4 @@ These scripts turn the five scanned map sections into `src/shared/mapdata.js`. T
 5. `assemble.py workdir src/shared/mapdata.js`: stitch sections A–E together (row 34 of one section = row 01 of the next), drop stray land islands, and keep only linear features that form chains.
 
 `overlay.py` draws the detections over the scan so you can check them by eye.
+6. `coastroad.py src/shared/mapdata.js`: trace the coast road between the towns it runs through (the double line is hard to read from the scan).

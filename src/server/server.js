@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { SIDES, ROLES } from '../shared/scenario.js';
-import { createGame, submitOrders, unready, act, viewFor, currentStep, actingSides, STEPS } from './engine.js';
+import { createGame, submitOrders, unready, act, viewFor, currentStep, actingSides, actingRole, autoDecide, STEPS } from './engine.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(here, '..');
@@ -26,7 +26,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
     try {
       room = { ...room, ...JSON.parse(fs.readFileSync(savePath, 'utf8')) };
       for (const p of room.players) p.connected = false;
-      if (room.game && room.game.version !== 4) {
+      if (room.game && room.game.version !== 5) {
         console.error('Save is from an older rules version; returning to the lobby with seats kept.');
         room.game = null;
         room.phase = 'lobby';
@@ -78,7 +78,8 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
       if (!empty.length) return;
       const s = empty[0];
       const step = room.game.step;
-      if (step === 'movecombat') act(room.game, s, { action: 'endPhase' });
+      if (room.game.decision) autoDecide(room.game);
+      else if (step === 'movecombat') act(room.game, s, { action: 'endPhase' });
       else if (step === 'declare') submitOrders(room.game, s, { goFirst: true });
       else submitOrders(room.game, s, {});
     }
@@ -99,7 +100,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
       };
       if (room.game && me.side) {
         msg.game = viewFor(room.game, me.side);
-        const auth = authority(me.side, step.role);
+        const auth = authority(me.side, actingRole(room.game));
         msg.canAct = !room.game.over && actingSides(room.game).includes(me.side) && auth?.id === me.id;
         msg.actingFor = auth ? auth.name : null;
       } else if (room.game) {
@@ -166,8 +167,8 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
         }
         case 'action': {
           if (room.phase !== 'game' || !me.side) return;
-          const step = currentStep(room.game);
-          if (authority(me.side, step.role)?.id !== me.id) return reply(ws, 'error', `This step is for the ${step.role} seat.`);
+          const role = actingRole(room.game);
+          if (authority(me.side, role)?.id !== me.id) return reply(ws, 'error', `This is for the ${role} seat.`);
           const err = act(room.game, me.side, m);
           if (err) return reply(ws, 'error', err);
           break;
@@ -182,6 +183,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
         case 'force': {
           // Host override: pass the current step for whichever side is holding things up.
           if (!isHost(ws) || room.phase !== 'game') return;
+          if (room.game.decision) { autoDecide(room.game); break; }
           for (const s of actingSides(room.game)) {
             if (room.game.step === 'movecombat') {
               room.game.seg.mode = 'move'; // skip outstanding attack obligations

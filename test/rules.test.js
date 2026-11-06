@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGame, submitOrders, act, planMove, inEnemyZoc, actingSides, gameMap } from '../src/server/engine.js';
 import { turnDate, initiativeRating, stepCost, edgeKey } from '../src/shared/rules.js';
-import { key, distance } from '../src/shared/hex.js';
+import { key, distance, neighbours } from '../src/shared/hex.js';
 import { hexFromName, nameOfHex } from '../src/shared/hexnames.js';
 
 const toMoveCombat = (g) => {
@@ -124,10 +124,47 @@ test('zones of control: stop on entry, no ZOC-to-ZOC, mandatory attack', () => {
   const beyond = [mal.pos[0] + 1, mal.pos[1] + 1];
   const err = planMove(g, mal, [between, beyond]);
   assert.match(err, /stop on entering/);
+  arm.engaged = true; // keep it from reacting away for this test
   assert.equal(act(g, 'axis', { action: 'move', unitId: mal.id, path: [between] }), null);
   act(g, 'axis', { action: 'toCombat' });
   assert.match(act(g, 'axis', { action: 'endPhase' }), /must attack/);
   assert.equal(act(g, 'axis', { action: 'attack', targetId: arm.id, attackerIds: [mal.id] }), null);
+  assert.deepEqual(actingSides(g), ['cw'], 'the defender now chooses its dispositions');
+  assert.match(act(g, 'axis', { action: 'endPhase' }), /Waiting/);
+  assert.equal(act(g, 'cw', { action: 'defend', tankRole: 'antiArmour' }), null);
   assert.ok(mal.cpUsed >= 5, 'assault costs the phasing unit 5 CP');
   assert.equal(act(g, 'axis', { action: 'endPhase' }), null);
+});
+
+test('reaction: a motorised unit may slip away from a slower approaching enemy [8.5]', () => {
+  const g = createGame();
+  toMoveCombat(g);
+  const inf = g.units.find((x) => x.id === 'it-1cc'); // foot, CPA 10
+  const arm = g.units.find((x) => x.id === 'cw-7arm'); // CPA 25
+  arm.pos = [inf.pos[0] + 2, inf.pos[1]];
+  for (const h of [inf.pos, [inf.pos[0] + 1, inf.pos[1]], arm.pos, [arm.pos[0] + 1, arm.pos[1]], [arm.pos[0] + 2, arm.pos[1]]]) gameMap().tiles[key(...h)] = { t: 'clear' };
+  for (const ek of Object.keys(gameMap().hexsides)) if ([inf.pos, arm.pos].some((h) => ek.includes(key(...h)))) delete gameMap().hexsides[ek];
+  assert.equal(act(g, 'axis', { action: 'move', unitId: inf.id, path: [[inf.pos[0] + 1, inf.pos[1]]] }), null);
+  assert.equal(g.decision?.kind, 'reaction');
+  assert.deepEqual(actingSides(g), ['cw']);
+  const shared = neighbours(...arm.pos).find((h) => neighbours(...inf.pos).some((n) => key(...n) === key(...h)));
+  gameMap().tiles[key(...shared)] = { t: 'clear' };
+  assert.match(act(g, 'cw', { action: 'react', unitId: arm.id, path: [shared] }), /zone of control/);
+  const cpBefore = arm.cpUsed;
+  assert.equal(act(g, 'cw', { action: 'react', unitId: arm.id, path: [[arm.pos[0] + 1, arm.pos[1]], [arm.pos[0] + 2, arm.pos[1]]] }), null);
+  assert.equal(g.decision, null, 'all reacting units used: back to the phasing player');
+  assert.equal(arm.cpUsed - cpBefore, 4, 'reaction costs movement CP but no break-off cost');
+});
+
+test('reaction is blocked when the enemy is 6+ CPA faster [8.53b]', () => {
+  const g = createGame();
+  toMoveCombat(g);
+  const fast = g.units.find((x) => x.id === 'it-mal'); fast.cpa = 30;
+  const slow = g.units.find((x) => x.id === 'cw-7arm'); // CPA 25 -> 30 >= 31? no; make it 20
+  slow.cpa = 20;
+  slow.pos = [fast.pos[0] + 2, fast.pos[1]];
+  for (const h of [fast.pos, [fast.pos[0] + 1, fast.pos[1]], slow.pos]) gameMap().tiles[key(...h)] = { t: 'clear' };
+  for (const ek of Object.keys(gameMap().hexsides)) if ([fast.pos, slow.pos].some((h) => ek.includes(key(...h)))) delete gameMap().hexsides[ek];
+  act(g, 'axis', { action: 'move', unitId: fast.id, path: [[fast.pos[0] + 1, fast.pos[1]]] });
+  assert.equal(g.decision, null);
 });

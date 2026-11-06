@@ -148,9 +148,9 @@ function zocAt(u, pos) {
 }
 
 // Cheapest CP paths for a unit, honouring terrain, enemy-occupied hexes and stop-in-ZOC.
-function reachable(u) {
+function reachable(u, { reaction = false } = {}) {
   const startZoc = zocAt(u, u.pos) || u.contact;
-  const base = startZoc ? (u.engaged ? CP.disengage : CP.breakContact) : 0;
+  const base = startZoc && !reaction ? (u.engaged ? CP.disengage : CP.breakContact) : 0;
   const cap = u.cpa <= 10 ? u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT - u.cpUsed : Infinity;
   const maxSteps = u.motorised ? u.fuel : Infinity;
   const best = new Map([[key(...u.pos), { cost: base, steps: 0, prev: null, stop: false }]]);
@@ -172,6 +172,7 @@ function reachable(u) {
       const steps = cb.steps + 1;
       if (cost > budget || steps > maxSteps) continue;
       const intoZoc = zocAt(u, n);
+      if (intoZoc && reaction) continue; // reacting units never enter an enemy ZOC
       if (intoZoc && cb.steps === 0 && startZoc) continue; // no ZOC-to-ZOC
       if (!best.has(k) || best.get(k).cost > cost) { best.set(k, { cost, steps, prev: key(...cur), stop: intoZoc }); queue.push(n); }
     }
@@ -193,6 +194,12 @@ function renderOrders() {
   if (g.over) { el.innerHTML = `<h3>Scenario over</h3><p>${g.winner === 'draw' ? 'A draw.' : `${sideName(g.winner)} victory.`}</p>`; return; }
   if (!mySide()) { el.innerHTML = '<p>You are not on a staff. Take a seat in the <b>Staff</b> tab.</p>'; return; }
   const acting = (g.acting || []).includes(mySide());
+  if (g.decision) {
+    el.innerHTML = decisionPanel(g.decision);
+    if (!S.canAct) for (const input of el.querySelectorAll('input, select, button')) input.disabled = true;
+    wireDecision(el, g.decision);
+    return;
+  }
   let head = `<h3>${esc(st.name)}</h3>${st.placeholder ? '<p class="note">Placeholder rules: this step will be replaced by the full rules.</p>' : ''}`;
   if (!acting) {
     const who = (g.acting || []).map(sideName).join(' and ');
@@ -213,6 +220,52 @@ function renderOrders() {
   if (!S.canAct && st.kind === 'simultaneous' && g.ready?.[mySide()] && S.you && S.canAct === false) { /* view only */ }
   wireOrders(el);
 }
+
+// ---------- Decisions the non-phasing side makes during the enemy's phase ----------
+
+function decisionPanel(d) {
+  if (!d.mine) {
+    const what = d.kind === 'reaction' ? 'decide whether to react' : 'set out its defence';
+    return `<h3>Enemy response</h3><p class="note">Waiting for the ${sideName(d.side)} to ${what}.</p>` + lastCombatReport();
+  }
+  const who = S.canAct ? '' : `<p class="note">${esc(S.actingFor || 'Nobody')} (Front-line Commander or stand-in) decides this for ${sideName(mySide())}. Advise them in staff chat.</p>`;
+  if (d.kind === 'reaction') {
+    const units = d.unitIds.map((id) => myUnits().find((u) => u.id === id)).filter(Boolean);
+    return `<h3>Reaction</h3>${who}<p><b>${esc(d.trigger)}</b> has moved next to your units. Motorised units may move away now, paying movement CP but no break-off cost. They may not enter an enemy zone of control.</p>
+      <p class="help">Select a unit, then click a highlighted hex. Reaction is optional.</p>
+      <ul class="orders">${units.map((u) => `<li>${d.moved.includes(u.id) ? '✓ ' : ''}<button class="act ${selected === u.id ? 'sel' : ''}" data-pick="${u.id}" ${d.moved.includes(u.id) ? 'disabled' : ''}>${esc(u.name)}</button> <span class="muted">CP ${fmtCP(u.cpUsed)}/${u.cpa}</span></li>`).join('')}</ul>
+      <button class="primary act" data-end-reaction>Done: stay put</button>`;
+  }
+  const a = d.attack;
+  const own = d.defenderIds.map((id) => myUnits().find((u) => u.id === id)).filter(Boolean);
+  const attackers = a.attackerIds.map((id) => S.game.units.find((u) => u.id === id)).filter(Boolean);
+  const hasArty = own.some((u) => (u.elements || []).some((e) => /Gun|Howitzer/.test(e.w)));
+  const hasTanks = own.some((u) => u.type === 'arm' || (u.elements || []).some((e) => /CV 33|M 1[134]|Cruiser|Matilda|Crusader|Light|Stuart|Valentine|Pz/.test(e.w)));
+  return `<h3>Under attack</h3>${who}
+    <p><b>${attackers.map((u) => esc(u.name)).join(', ') || 'Enemy forces'}</b> ${a.probe ? 'probe' : 'attack'} your units at ${esc(hexLabel(key(...a.targetPos)))}.</p>
+    <div class="attack">
+      ${hasArty ? `<label class="check"><input type="checkbox" id="dFwd"> Artillery Forward <span class="muted">(guns combine fire and help defend, but are exposed to losses)</span></label>` : ''}
+      ${hasTanks ? `<label class="check"><input type="checkbox" id="dTanks"> Tanks join the close assault <span class="muted">(otherwise they fire anti-armour)</span></label>` : ''}
+      <p class="help"><b>Retreat before assault:</b> ticked units fall back after the barrage, unless the barrage pins them. If every unit leaves, there is no assault.</p>
+      ${own.map((u) => `<label class="check"><input type="checkbox" data-rba value="${u.id}"> ${esc(u.name)} <span class="muted">(${u.str} TOE, cohesion ${u.cohesion})</span></label>`).join('')}
+    </div>
+    <button class="primary act" data-defend>Stand to</button>`;
+}
+
+function wireDecision(el, d) {
+  el.querySelectorAll('[data-pick]').forEach((b) => (b.onclick = () => { selected = b.dataset.pick; renderOrders(); drawMap(); }));
+  el.querySelector('[data-end-reaction]')?.addEventListener('click', () => { selected = null; send({ type: 'action', action: 'endReaction' }); });
+  el.querySelector('[data-defend]')?.addEventListener('click', () => {
+    send({
+      type: 'action', action: 'defend',
+      artilleryForward: !!el.querySelector('#dFwd')?.checked,
+      tankRole: el.querySelector('#dTanks')?.checked ? 'assault' : 'antiArmour',
+      retreat: [...el.querySelectorAll('[data-rba]:checked')].map((c) => c.value),
+    });
+  });
+}
+
+const reactionMode = () => S.game.decision?.kind === 'reaction' && S.game.decision.mine && S.canAct;
 
 function airForm() {
   const pts = S.game.airPoints;
@@ -492,7 +545,9 @@ function drawMap() {
   const own = myUnits();
   const visible = (c, r) => !mySide() || own.some((u) => distance(u.pos, [c, r]) <= VISION_RANGE);
   const sel = own.find((u) => u.id === selected);
-  reachCache = sel && myPhase() && S.game.seg?.mode === 'move' && S.canAct ? reachable(sel) : null;
+  reachCache = !sel ? null
+    : reactionMode() ? (S.game.decision.unitIds.includes(sel.id) && !S.game.decision.moved.includes(sel.id) ? reachable(sel, { reaction: true }) : null)
+    : myPhase() && !S.game.decision && S.game.seg?.mode === 'move' && S.canAct ? reachable(sel) : null;
 
   for (let c = 0; c < MAP_COLS; c++) {
     for (let r = 0; r < MAP_ROWS; r++) {
@@ -698,7 +753,8 @@ function clickHex([c, r]) {
   // Moving the selected unit takes priority if the hex is reachable.
   if (selected && reachCache?.has(k) && k !== key(...myUnits().find((u) => u.id === selected).pos)) {
     const path = pathTo(reachCache, k);
-    send({ type: 'action', action: 'move', unitId: selected, path });
+    send({ type: 'action', action: reactionMode() ? 'react' : 'move', unitId: selected, path });
+    if (reactionMode()) selected = null;
     return;
   }
   if (mine.length) {

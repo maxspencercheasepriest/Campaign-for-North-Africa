@@ -34,6 +34,8 @@ test('an assault runs the full procedure and charges CP, ammo and losses', () =>
     const { g, att, def } = setup(seed * 7919);
     const before = { att: att.str, def: def.str, attAmmo: att.ammo, defAmmo: def.ammo };
     assert.equal(act(g, 'axis', { action: 'attack', targetId: def.id, attackerIds: [att.id] }), null);
+    assert.equal(g.decision.kind, 'defence');
+    assert.equal(act(g, 'cw', { action: 'defend' }), null);
     assert.ok(g.lastCombat.lines.some((l) => /Close assault/.test(l)) || g.lastCombat.lines.some((l) => /surrender/i.test(l)), g.lastCombat.lines.join('\n'));
     assert.equal(att.cpUsed, 5);
     assert.ok(def.cpUsed === 3 || def.cpUsed === 1 || def.cpUsed > 3, `defender CP ${def.cpUsed}`);
@@ -51,6 +53,27 @@ test('a hopelessly outmatched, ammunition-less defender surrenders', () => {
   def.ammo = 0;
   const strBefore = def.str;
   act(g, 'axis', { action: 'attack', targetId: def.id, attackerIds: [att.id] });
+  act(g, 'cw', { action: 'defend' });
   assert.ok(!g.units.includes(def));
   assert.equal(g.prisoners.axis, strBefore);
+});
+
+test('retreat before assault: an unpinned defender can withdraw and the assault is cancelled [13.0]', () => {
+  let withdrew = 0, stood = 0;
+  for (let seed = 1; seed <= 20; seed++) {
+    const { g, att, def } = setup(seed * 104729);
+    const pos = key(...def.pos);
+    act(g, 'axis', { action: 'attack', targetId: def.id, attackerIds: [att.id] });
+    act(g, 'cw', { action: 'defend', retreat: [def.id] });
+    const lines = g.lastCombat.lines.join('\n');
+    if (key(...def.pos) !== pos) {
+      withdrew++;
+      assert.match(lines, /no assault/);
+      assert.ok(!att.cohesion || att.cohesion <= 0, 'no victory cohesion bonus for an empty hex');
+    } else {
+      stood++;
+      assert.match(lines, /pinned by the barrage|nowhere to retreat|Close assault|surrender/i);
+    }
+  }
+  assert.ok(withdrew > 0, 'some withdrawals happened');
 });

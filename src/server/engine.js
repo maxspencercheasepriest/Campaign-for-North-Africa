@@ -44,7 +44,7 @@ export const gameMap = () => (mapCache ||= buildMap());
 
 export function createGame(options = {}) {
   const g = {
-    version: 4,
+    version: 5,
     scenario: SCENARIO.id,
     turn: SCENARIO.firstTurn,
     opStage: 0,
@@ -62,6 +62,7 @@ export function createGame(options = {}) {
     ready: { axis: false, cw: false },
     log: [],
     lastCombat: null,
+    decision: null, // pending choice by the non-phasing side: { kind: 'reaction'|'defence', side, role, ... }
     prisoners: { axis: 0, cw: 0 },
     winner: null,
     over: false,
@@ -88,11 +89,14 @@ function log(g, side, text) {
 // ---------- Sequence of play ----------
 
 export const currentStep = (g) => STEPS[g.step];
+// The staff seat that acts right now (a pending defender decision belongs to the defending front-line commander).
+export const actingRole = (g) => (g.decision ? g.decision.role : currentStep(g).role);
 export const phasingSide = (g) => (g.order && g.half ? g.order[g.half] : null);
 
 // Which sides must act in the current step.
 export function actingSides(g) {
   if (g.over) return [];
+  if (g.decision) return [g.decision.side];
   const st = currentStep(g);
   if (st.kind === 'simultaneous') return SIDES.filter((s) => !g.ready[s]);
   if (st.kind === 'holder') return [g.initiative.holder];
@@ -352,6 +356,15 @@ export function inEnemyZoc(g, unit, pos) {
 
 export function act(g, side, a) {
   if (g.over) return 'The game is over.';
+  if (g.decision) {
+    if (g.decision.side !== side) return `Waiting for the ${side === 'axis' ? 'Commonwealth' : 'Axis'} to respond.`;
+    switch (a?.action) {
+      case 'react': return actReact(g, side, a);
+      case 'endReaction': g.decision = null; return null;
+      case 'defend': return actDefend(g, side, a);
+      default: return 'Respond to the pending decision first.';
+    }
+  }
   if (g.step !== 'movecombat' || phasingSide(g) !== side) return 'It is not your Movement & Combat Phase.';
   switch (a?.action) {
     case 'move': return actMove(g, side, a);
@@ -374,12 +387,12 @@ export function act(g, side, a) {
 }
 
 // Validates a path and returns { cp, bp, hexes, stopAt } or an error string.
-export function planMove(g, u, path) {
+export function planMove(g, u, path, { reaction = false } = {}) {
   if (!Array.isArray(path) || !path.length) return 'Empty path.';
   const map = gameMap();
   let cp = 0, bp = 0;
   const startInZoc = inEnemyZoc(g, u, u.pos);
-  if (startInZoc || u.contact) cp += u.engaged ? CP.disengage : CP.breakContact; // [8.15, 8.24]
+  if (!reaction && (startInZoc || u.contact)) cp += u.engaged ? CP.disengage : CP.breakContact; // [8.15, 8.24]; reaction pays none [8.52]
   let cur = u.pos;
   for (let i = 0; i < path.length; i++) {
     const step = path[i];
@@ -390,6 +403,7 @@ export function planMove(g, u, path) {
     if (!c) return `Cannot enter ${key(...step)} (${TERRAIN[map.tiles[key(...step)]?.t]?.label || 'off map'}).`;
     cp += c.cp; bp += c.bp;
     const intoZoc = inEnemyZoc(g, u, step);
+    if (intoZoc && reaction) return 'Reacting units may not enter an enemy zone of control [8.55].';
     if (intoZoc && i === 0 && startInZoc) return 'Cannot move directly from one enemy-controlled hex to another [10.24].';
     if (intoZoc && i < path.length - 1) return 'Units must stop on entering an enemy zone of control [10.23].';
     cur = step;
@@ -410,20 +424,10 @@ function actMove(g, side, a) {
   if (u.cpa <= 10 && u.cpUsed + plan.cp > u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT) {
     return `${u.name} is on foot and may not voluntarily spend more than ${u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT} CP this stage [8.17].`;
   }
-  const dest = a.path.at(-1);
-  const stackAfter = hexSP(unitsAt(g, dest).filter((x) => x.side === side && x !== u)) + (STACKING_POINTS[u.size] ?? 0);
-  if (stackAfter > stackingLimit(gameMap(), dest)) return `Stacking limit exceeded at ${key(...dest)} (${stackAfter}/${stackingLimit(gameMap(), dest)}) [9.31].`;
-  // Fuel: placeholder of 1 point per hex until the Fuel Consumption Chart (49.19) is in.
-  if (u.motorised) {
-    if (u.fuel < a.path.length) return `${u.name} has only ${u.fuel} fuel.`;
-    u.fuel -= a.path.length;
-  }
-  spendCP(g, u, plan.cp);
-  u.bp += plan.bp;
-  u.pos = dest;
-  u.contact = false;
-  u.engaged = false;
+  const err = doMove(g, u, a.path, plan);
+  if (err) return err;
   g.seg.moved.push(u.id);
+  offerReaction(g, u);
   // Totally disorganised enemies surrender when approached [6.26].
   for (const e of g.units.filter((x) => x.side !== side && collapsed(x) && distance(x.pos, u.pos) === 1)) {
     log(g, 'all', `${e.name} surrenders to ${u.name}.`);
@@ -432,6 +436,66 @@ function actMove(g, side, a) {
   }
   removeDestroyed(g);
   updateOwnership(g);
+  return null;
+}
+
+function doMove(g, u, path, plan) {
+  const dest = path.at(-1);
+  const stackAfter = hexSP(unitsAt(g, dest).filter((x) => x.side === u.side && x !== u)) + (STACKING_POINTS[u.size] ?? 0);
+  if (stackAfter > stackingLimit(gameMap(), dest)) return `Stacking limit exceeded at ${key(...dest)} (${stackAfter}/${stackingLimit(gameMap(), dest)}) [9.31].`;
+  // Fuel: placeholder of 1 point per hex until the Fuel Consumption Chart (49.19) is in.
+  if (u.motorised) {
+    if (u.fuel < path.length) return `${u.name} has only ${u.fuel} fuel.`;
+    u.fuel -= path.length;
+  }
+  spendCP(g, u, plan.cp);
+  u.bp += plan.bp;
+  u.pos = dest;
+  u.contact = false;
+  u.engaged = false;
+  return null;
+}
+
+// ---------- Reaction [8.5] ----------
+// When a phasing combat unit moves next to them, eligible non-phasing units may move away.
+const sizeRank = (u) => ({ company: 0, battalion: 1, brigade: 2, superBrigade: 3, division: 4 })[u.size] ?? 1;
+export function reactionCandidates(g, mover) {
+  if (!isCombatUnit(mover)) return [];
+  return g.units.filter((u) => {
+    if (u.side === mover.side || !isCombatUnit(u) || !u.motorised || collapsed(u) || u.engaged) return false; // [8.53a, d]
+    if (distance(u.pos, mover.pos) !== 1) return false;
+    // Already pinned in some other enemy ZOC [8.53c].
+    const others = g.units.filter((e) => e.side === mover.side && e !== mover && exertsZoc(g, e) && zocReaches(g, e, u.pos));
+    if (others.length) return false;
+    // A much faster enemy pins slower units, unless it is too small to pin them [8.53b, 8.54].
+    // (The board game requires the mover to announce a close assault; here that is assumed.)
+    const tooSmall = (sizeRank(mover) <= 1 && sizeRank(u) >= 4) || (sizeRank(mover) === 0 && sizeRank(u) >= 2);
+    if (mover.cpa >= u.cpa + 6 && !tooSmall) return false;
+    return true;
+  });
+}
+
+function offerReaction(g, mover) {
+  const cands = reactionCandidates(g, mover);
+  if (!cands.length) return;
+  g.decision = { kind: 'reaction', side: cands[0].side, role: 'front', unitIds: cands.map((u) => u.id), trigger: mover.name, moved: [] };
+  log(g, cands[0].side, `${mover.name} moves next to ${cands.map((u) => u.name).join(', ')}: you may react.`);
+}
+
+function actReact(g, side, a) {
+  const d = g.decision;
+  if (d.kind !== 'reaction') return 'No reaction is possible right now.';
+  if (!d.unitIds.includes(a.unitId)) return 'That unit cannot react.';
+  if (d.moved.includes(a.unitId)) return 'That unit has already reacted.';
+  const u = g.units.find((x) => x.id === a.unitId);
+  if (!u) return 'Unknown unit.';
+  const plan = planMove(g, u, a.path, { reaction: true });
+  if (typeof plan === 'string') return plan;
+  const err = doMove(g, u, a.path, plan);
+  if (err) return err;
+  d.moved.push(u.id);
+  log(g, 'all', `${u.name} reacts, falling back to ${key(...u.pos)}.`);
+  if (d.moved.length >= d.unitIds.length) g.decision = null;
   return null;
 }
 
@@ -491,11 +555,33 @@ function actAttack(g, side, a) {
     if (u.motorised && e?.type === 'escarpment' && e.down === key(...u.pos)) return `${u.name} is motorised and cannot assault up an escarpment [15.34].`;
     if (u.motorised && map.tiles[key(...targetPos)].t === 'saltmarsh') return `${u.name} is motorised and cannot assault into a salt marsh [8.44].`;
   }
-  // A phasing unit pays combat CP at most once per segment (5), a defender at most 3 [11.24].
+  // The hex counts as attacked from now on [15.23]; the defender now makes its choices [12.1, 13.0, 14.0].
+  g.seg.attacked.push(key(...targetPos));
+  const defenders = unitsAt(g, targetPos).filter((u) => u.side !== side);
+  g.decision = {
+    kind: 'defence', side: defenders[0].side, role: 'front',
+    attack: { attackerIds: attackers.map((u) => u.id), targetPos, targetName: target.name, probe: !!a.probe, artilleryForward: a.artilleryForward !== false, tankRole: a.tankRole || 'assault' },
+    defenderIds: defenders.map((u) => u.id),
+  };
+  log(g, 'all', `${attackers.map((u) => u.name).join(', ')} ${a.probe ? 'probe' : 'attack'} ${target.name}${defenders.length > 1 ? ' and the units with it' : ''}. Awaiting the defender's dispositions.`);
+  return null;
+}
+
+// Defender's dispositions, then the full combat procedure.
+// a: { artilleryForward: bool, tankRole: 'antiArmour'|'assault', retreat: [unitIds] (retreat before assault if not pinned) }
+function actDefend(g, side, a = {}) {
+  const d = g.decision;
+  if (d.kind !== 'defence') return 'No attack is waiting for your response.';
+  g.decision = null;
+  const atk = d.attack;
+  const attackers = atk.attackerIds.map((id) => g.units.find((x) => x.id === id)).filter((u) => u && u.str > 0);
+  const phasing = attackers[0]?.side;
+  const map = gameMap();
   g.seg.paid ||= {};
+  // A phasing unit pays combat CP at most once per segment (5), a defender at most 3 [11.24].
   const spend = (u, cp) => {
     const already = g.seg.paid[u.id] || 0;
-    const cap = u.side === side ? 5 : 3;
+    const cap = u.side === phasing ? 5 : 3;
     const pay = Math.max(0, Math.min(cp, cap - already));
     g.seg.paid[u.id] = already + pay;
     if (pay) spendCP(g, u, pay);
@@ -509,14 +595,27 @@ function actAttack(g, side, a) {
     log: (t) => log(g, 'all', t),
   };
   ctx.retreatUnits = makeRetreat(g, { map, spendCP: (u, cp) => spendCP(g, u, cp), inEnemyZoc });
-  log(g, 'all', `— ${attackers.map((u) => u.name).join(', ')} ${a.probe ? 'probe' : 'attack'} ${target.name}${unitsAt(g, targetPos).length > 1 ? ' and the units with it' : ''} —`);
-  const res = resolveCombat(g, ctx, attackers, targetPos, { probe: !!a.probe, artilleryForward: a.artilleryForward !== false, tankRole: a.tankRole });
-  g.lastCombat = { turn: g.turn, stage: g.opStage, lines: res.lines, title: `${attackers.map((u) => u.name).join(', ')} → ${target.name}` };
+  if (!attackers.length) return null;
+  const defOpts = {
+    artilleryForward: !!a.artilleryForward,
+    tankRole: a.tankRole === 'assault' ? 'assault' : 'antiArmour',
+    retreat: new Set((a.retreat || []).filter((id) => d.defenderIds.includes(id))),
+  };
+  const res = resolveCombat(g, ctx, attackers, atk.targetPos, { probe: atk.probe, artilleryForward: atk.artilleryForward, tankRole: atk.tankRole, defence: defOpts });
+  g.lastCombat = { turn: g.turn, stage: g.opStage, lines: res.lines, title: `${attackers.map((u) => u.name).join(', ')} → ${atk.targetName}` };
   removeDestroyed(g);
-  if (res.defendersCleared) for (const u of attackers.filter((x) => x.str > 0)) earnRP(u, VICTORY_RP); // [6.24.2]
-  g.seg.attacked.push(key(...targetPos));
+  if (res.defendersCleared && !res.vacatedBeforeAssault) for (const u of attackers.filter((x) => x.str > 0)) earnRP(u, VICTORY_RP); // [6.24.2]
   updateOwnership(g);
   return null;
+}
+
+// Default answers for a side with nobody seated, or when the host forces things along.
+export function autoDecide(g) {
+  const d = g.decision;
+  if (!d) return;
+  if (d.kind === 'reaction') { g.decision = null; return; }
+  const own = d.defenderIds.map((id) => g.units.find((x) => x.id === id)).filter(Boolean);
+  actDefend(g, d.side, { artilleryForward: false, tankRole: own.some((u) => u.type === 'arm') ? 'antiArmour' : 'assault', retreat: [] });
 }
 
 function removeDestroyed(g) {
@@ -629,6 +728,7 @@ export function viewFor(g, side) {
     truckCapacity: TRUCK_CAPACITY[side],
     options: g.options,
     obligations,
+    decision: g.decision ? { ...g.decision, mine: g.decision.side === side } : null,
     lastCombat: g.lastCombat,
     prisoners: g.prisoners,
     winner: g.winner,

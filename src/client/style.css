@@ -89,3 +89,5 @@ tr.warn td { color: var(--red); font-weight: bold; }
 details.report { background: #efe6cf; border: 1px solid #bfae86; padding: 6px 8px; margin: 10px 0; font-size: 12px; }
 details.report summary { font-weight: bold; cursor: pointer; }
 details.report p { margin: 4px 0; }
+
+button.sel { background: var(--blue); }
