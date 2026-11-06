@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   D66, _raw, CA_ATTACKER_LOSS, CA_DEFENDER_LOSS, BARRAGE, MORALE_TABLE, antiArmourRow, antiArmourDamage,
-  caColumnForDifferential, moraleModifier, orgSizeShift,
+  caColumnForDifferential, moraleModifier, orgSizeShift, BREAKDOWN, WEATHER, breakdownColumn,
 } from '../src/shared/tables.js';
 
 function checkPartition(name, rows, ncols) {
@@ -60,4 +60,21 @@ test('close assault columns and organisation shifts', () => {
   assert.equal(CA_DEFENDER_LOSS[caColumnForDifferential(3)][12], 20);
   assert.equal(orgSizeShift(5, 1), 4);
   assert.equal(orgSizeShift(2, 2), 0);
+});
+
+test('breakdown table columns each cover all 36 results once', () => {
+  checkPartition('breakdown', _raw.BREAKDOWN_ROWS, 9);
+  assert.equal(Object.keys(BREAKDOWN[4]).length, 36);
+  assert.equal(breakdownColumn(3), 0);
+  assert.equal(breakdownColumn(3.5), 1);
+  assert.equal(breakdownColumn(71), 8);
+});
+
+test('weather table rows each cover all 36 results once', () => {
+  for (const [season, cells] of Object.entries(_raw.WEATHER_ROWS)) {
+    const seen = new Set();
+    for (const cell of cells) for (const v of _raw.parseRange(cell)) { assert.ok(!seen.has(v), `${season} ${v}`); seen.add(v); }
+    assert.equal(seen.size, 36, `${season} covers ${seen.size}/36`);
+    assert.equal(Object.keys(WEATHER[season]).length, 36);
+  }
 });

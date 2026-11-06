@@ -12,6 +12,27 @@ export function turnDate(gt) {
   const m = 8 + Math.floor(k / 4);
   return `${MONTHS[m % 12]} ${['I', 'II', 'III', 'IV'][k % 4]} ${1940 + Math.floor(m / 12)}`;
 }
+// Seasons [29.1]: Spring Mar III-Jun II, Summer Jun III-Sep II, Fall Sep III-Dec II, Winter Dec III-Mar II.
+export function seasonOfTurn(gt) {
+  const k = gt + 1;
+  const week = ((8 + Math.floor(k / 4)) % 12) * 4 + (k % 4); // 0-based week of the year, Jan I = 0
+  if (week >= 10 && week < 22) return 'spring';
+  if (week >= 22 && week < 34) return 'summer';
+  if (week >= 34 && week < 46) return 'fall';
+  return 'winter';
+}
+export const SECTION_ROWS = 33; // each map section is 33 hex rows deep
+export const sectionOfRow = (r) => 'ABCDE'[Math.min(4, Math.floor(r / SECTION_ROWS))];
+// Weather actually felt in one hex: hot is everywhere, storms only on the struck sections [29.31, 29.41, 29.51].
+// Sandstorms never reach the Nile delta [29.41].
+export function localWeather(weather, map, hex) {
+  if (!weather || weather.type === 'normal') return 'normal';
+  if (weather.type === 'hot') return 'hot';
+  if (!weather.sections.includes(sectionOfRow(hex[1]))) return 'normal';
+  const t = map?.tiles[key(...hex)]?.t;
+  if (weather.type === 'sand' && t === 'delta') return 'normal';
+  return weather.type;
+}
 export const OPS_STAGES_PER_TURN = 3;
 export const LAST_GAME_TURN = 111;
 
@@ -95,7 +116,7 @@ function crossing(map, from, to) {
 
 // Cost for a unit to step from one hex to an adjacent one, or null if it may not [8.3, 8.4].
 // map = { tiles, hexsides, roads:Set(edgeKey), tracks:Set(edgeKey) }
-export function stepCost(map, from, to, { motorised }) {
+export function stepCost(map, from, to, { motorised, weather = 'normal' }) {
   const tile = map.tiles[key(...to)];
   if (!tile) return null;
   const terr = TERRAIN[tile.t];
@@ -103,11 +124,28 @@ export function stepCost(map, from, to, { motorised }) {
   const side = crossing(map, from, to);
   const sideData = side ? HEXSIDES[side] : null;
 
+  const onRail = map.rails?.has(ek);
+  let res;
   if (map.roads.has(ek)) {
     // Roads ignore terrain in the hex and negate hexside features.
-    return { cp: motorised ? ROAD.mp : ROAD.np, bp: motorised ? ROAD.bp : 0, via: 'road' };
+    // In a rainstorm they cost and break vehicles like tracks [29.56].
+    res = weather === 'rain'
+      ? { cp: TRACK[motorised ? 'mp' : 'np'], bp: motorised ? terr.bp / 2 : 0, via: 'road' }
+      : { cp: motorised ? ROAD.mp : ROAD.np, bp: motorised ? ROAD.bp : 0, via: 'road' };
+  } else {
+    res = stepCostOffRoad(map, tile, terr, ek, side, sideData, motorised, weather, onRail);
   }
+  if (res && weather === 'sand') res = { ...res, cp: res.cp * 2 }; // [29.44]
+  return res;
+}
+
+function stepCostOffRoad(map, tile, terr, ek, side, sideData, motorised, weather, onRail) {
   if (tile.t === 'sea' || terr.onlyByRoad) return null;
+  if (weather === 'rain') {
+    // Wadis and rivers are uncrossable except by road or rail [29.55, 29.57]; deltas cannot be entered by vehicles off-road [29.58].
+    if (side === 'wadi' || side === 'majorRiver' || side === 'minorRiver') { if (!onRail) return null; }
+    if (motorised && tile.t === 'delta' && !onRail) return null;
+  }
 
   if (map.tracks.has(ek)) {
     if (motorised && side === 'upEscarpment') return null; // vehicles never go up an escarpment [8.42]

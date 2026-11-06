@@ -3,7 +3,7 @@ import {
   MAP_COLS, MAP_ROWS, SIDES, SIDE_NAMES, ROLES, ROLE_NAMES, PORTS, LOCATIONS, VISION_RANGE, buildMap,
 } from '/shared/scenario.js';
 import { hexFromName, nameOfHex } from '/shared/hexnames.js';
-import { TERRAIN, HEXSIDES, STACKING_POINTS, NON_MOTORISED_VOLUNTARY_LIMIT, CP, stepCost, edgeKey } from '/shared/rules.js';
+import { TERRAIN, HEXSIDES, STACKING_POINTS, NON_MOTORISED_VOLUNTARY_LIMIT, CP, stepCost, edgeKey, localWeather } from '/shared/rules.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -115,7 +115,8 @@ function renderTop() {
   const where = g.opStage ? `Ops Stage ${g.opStage}` : 'Naval Convoy Stage';
   const who = g.half ? ` · Player ${g.half}: <b>${sideName(g.phasing)}</b>` : '';
   const seg = g.step === 'movecombat' && g.seg ? ` <span class="muted">(segment ${g.seg.n}, ${g.seg.mode})</span>` : '';
-  $('turnInfo').innerHTML = `GT <b>${g.turn}</b>/${g.lastTurn} · ${esc(g.date)} · ${where}${who} · <b>${esc(st.name)}</b>${seg}`;
+  const wx = g.weather && g.opStage ? ` · <span class="pill" title="Weather this Operations Stage">${{ normal: 'Normal', hot: 'Hot', sand: 'Sandstorm ' + g.weather.sections.join(','), rain: 'Rainstorm ' + g.weather.sections.join(',') }[g.weather.type]}</span>` : '';
+  $('turnInfo').innerHTML = `GT <b>${g.turn}</b>/${g.lastTurn} · ${esc(g.date)} · ${where}${wx}${who} · <b>${esc(st.name)}</b>${seg}`;
   $('readyInfo').innerHTML = `<span class="pill" title="Initiative holder this Game-Turn">Initiative: ${sideName(g.initiative?.holder)}</span> ` +
     (g.acting || []).map((s) => `<span class="pill waiting">waiting on ${sideName(s)}</span>`).join(' ');
 }
@@ -166,7 +167,7 @@ function reachable(u, { reaction = false } = {}) {
       if (n[0] < 0 || n[1] < 0 || n[0] >= MAP_COLS || n[1] >= MAP_ROWS) continue;
       const k = key(...n);
       if (enemyAt.has(k)) continue;
-      const c = stepCost(MAP, cur, n, { motorised: u.motorised });
+      const c = stepCost(MAP, cur, n, { motorised: u.motorised, weather: localWeather(S.game.weather, MAP, n) });
       if (!c) continue;
       const cost = cb.cost + c.cp;
       const steps = cb.steps + 1;
@@ -561,6 +562,7 @@ function drawMap() {
       if (t.t === 'saltmarsh' && s >= 10) { ctx.strokeStyle = '#c9b45a'; ctx.lineWidth = 1; ctx.beginPath(); for (let i = -s * 0.6; i < s * 0.6; i += 5) { ctx.moveTo(x + i, y - s * 0.5); ctx.lineTo(x + i + 4, y + s * 0.5); } ctx.stroke(); }
       if (t.t === 'gravel' && s >= 10) { ctx.strokeStyle = '#d9a21c'; ctx.lineWidth = 1; for (const [dx, dy] of [[-0.3, -0.2], [0.25, -0.3], [0, 0.25], [-0.35, 0.3], [0.35, 0.2]]) { ctx.beginPath(); ctx.arc(x + dx * s, y + dy * s, s * 0.12, 0, Math.PI * 2); ctx.stroke(); } }
       if (t.t === 'mountain') { ctx.fillStyle = '#7d6748'; ctx.beginPath(); ctx.moveTo(x - s * 0.4, y + s * 0.3); ctx.lineTo(x, y - s * 0.35); ctx.lineTo(x + s * 0.4, y + s * 0.3); ctx.fill(); }
+      { const w = t.t !== 'sea' && localWeather(S.game.weather, MAP, [c, r]); if (w === 'sand' || w === 'rain') { hexPath(x, y, s); ctx.fillStyle = w === 'sand' ? 'rgba(214,170,90,0.38)' : 'rgba(70,110,170,0.32)'; ctx.fill(); } }
       if (t.t !== 'sea' && !visible(c, r)) { hexPath(x, y, s); ctx.fillStyle = 'rgba(40,30,15,0.16)'; ctx.fill(); }
       if (s >= 9) {
         hexPath(x, y, s);
@@ -651,6 +653,13 @@ function drawMap() {
     const { x, y } = centre(...parseKey(k));
     ctx.fillStyle = d.side === mySide() ? '#2f5d3a' : '#8c2b1e';
     ctx.fillRect(x + s * 0.3, y - s * 0.75, s * 0.32, s * 0.32);
+  }
+  // Broken-down vehicles
+  for (const b of S.game.broken || []) {
+    const { x, y } = centre(...b.pos);
+    ctx.fillStyle = SIDE_COLORS[b.side]?.fill || '#ccc'; ctx.strokeStyle = '#222'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(x - s * 0.4, y + s * 0.45, s * 0.22, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#222'; ctx.font = `bold ${Math.max(8, s * 0.3)}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText(String(b.n), x - s * 0.4, y + s * 0.55);
   }
   // Planned truck convoys
   if (S.game.step === 'trucks') for (const t of draft.transfers || []) {

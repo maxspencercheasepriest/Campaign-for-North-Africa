@@ -203,4 +203,42 @@ export function moraleModifier(cohesion, d66) {
 }
 
 // Exposed for tests.
-export const _raw = { ATTACKER_LOSS_ROWS, DEFENDER_LOSS_ROWS, BARRAGE_ROWS, MORALE_ROWS, parseRange };
+
+
+// ---------- Breakdown Table [21.38] ----------
+// Nine columns of accumulated breakdown points; each row is the percentage of vehicles that break down.
+export const BREAKDOWN_COLUMNS = ['0-3', '4-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71+'];
+const BREAKDOWN_ROWS = [
+  [0, ['11-66', '11-42', '11-32', '11-26', '11-23', '11-16', '11-14', '-', '-']],
+  [10, ['-', '43-64', '33-62', '31-55', '24-53', '21-46', '15-42', '11-33', '11-25']],
+  [25, ['-', '65', '63-64', '56-62', '54-61', '51-56', '43-54', '34-52', '26-43']],
+  [33, ['-', '66', '65', '63-65', '62-64', '61-63', '55-63', '53-62', '44-55']],
+  [50, ['-', '-', '66', '66', '65-66', '64-65', '64-65', '63-64', '56-63']],
+  [75, ['-', '-', '-', '-', '-', '66', '66', '65-66', '64-66']],
+];
+export const BREAKDOWN = Array.from({ length: 9 }, () => ({}));
+BREAKDOWN_ROWS.forEach(([pct, cells]) => cells.forEach((cell, c) => { for (const v of parseRange(cell)) BREAKDOWN[c][v] = pct; }));
+// Column index for accumulated breakdown points (fractions round up) [21.31, 21.33].
+export function breakdownColumn(points) {
+  const p = Math.ceil(points);
+  return p <= 3 ? 0 : p <= 10 ? 1 : p <= 20 ? 2 : p <= 30 ? 3 : p <= 40 ? 4 : p <= 50 ? 5 : p <= 60 ? 6 : p <= 70 ? 7 : 8;
+}
+
+// ---------- Weather Table [29.61] and Foul Weather Location Table [29.7] ----------
+// By season (see rules.js seasonOfTurn): rolls giving Normal, Hot, Sandstorm, Rainstorm.
+const WEATHER_ROWS = {
+  spring: ['11-42', '43-55', '56-64', '65-66'],
+  summer: ['11-23', '24-55', '56-66', '-'],
+  fall: ['11-35', '36-54', '55-61', '62-66'],
+  winter: ['11-52', '-', '-', '53-66'],
+};
+export const WEATHER_TYPES = ['normal', 'hot', 'sand', 'rain'];
+export const WEATHER = Object.fromEntries(Object.entries(WEATHER_ROWS).map(([season, cells]) => {
+  const m = {};
+  cells.forEach((cell, i) => { for (const v of parseRange(cell)) m[v] = WEATHER_TYPES[i]; });
+  return [season, m];
+}));
+// Map sections struck by a sandstorm or rainstorm, by one die. D,E* : sandstorms never cover delta hexes.
+export const FOUL_WEATHER_SECTIONS = { 1: ['A', 'B'], 2: ['C', 'D'], 3: ['D', 'E'], 4: ['B', 'C'], 5: ['B', 'D'], 6: ['B', 'C', 'D'] };
+
+export const _raw = { ATTACKER_LOSS_ROWS, DEFENDER_LOSS_ROWS, BARRAGE_ROWS, MORALE_ROWS, BREAKDOWN_ROWS, WEATHER_ROWS, parseRange };

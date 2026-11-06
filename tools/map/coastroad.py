@@ -6,7 +6,7 @@ ROUTES = [
     # Via Balbia (Libya)
     ['A2109', 'A1816', 'A2021', 'A2629', 'A4130', 'A4827', 'B5504', 'B5925', 'C4807', 'C4321', 'C4021'],
     # Egyptian coast road
-    ['D3714', 'E3613'],
+    ['C4021', 'D3714', 'E3613'],
 ]
 p = sys.argv[1]
 src = open(p).read()

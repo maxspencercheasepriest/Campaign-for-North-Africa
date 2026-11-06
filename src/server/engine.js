@@ -9,7 +9,8 @@
 //   8.6  Breaking off from contact.
 //   9.0  Stacking points and terrain stacking limits.
 //   10.0 Zones of control (who exerts them, where they reach, stop-on-entry, no ZOC-to-ZOC, mandatory attack).
-// STILL PLACEHOLDER: combat resolution (11-15), supply/air/convoys (32 / 33-58), weather (29), and more.
+//   21-22 Breakdown (rolled when a unit stops) and automatic field repair of tanks; 29 Weather.
+// STILL PLACEHOLDER: supply/air/convoys (32 / 33-58), truck breakdown, facility repair, and more.
 
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
 import {
@@ -21,8 +22,10 @@ import { resolveCombat, makeRetreat, rawDefensiveCA, syncStr } from './combat.js
 import {
   turnDate, initiativeRating, CP, NON_MOTORISED_VOLUNTARY_LIMIT, COHESION_MAX, COHESION_COLLAPSE,
   REST_RP, VICTORY_RP, HEAVY_LOSS_DP, CONTINUAL_MOVE_RANGE, STACKING_POINTS, TERRAIN, HEXSIDES,
-  stepCost, stackingLimit, edgeKey, OPS_STAGES_PER_TURN,
+  stepCost, stackingLimit, edgeKey, OPS_STAGES_PER_TURN, seasonOfTurn, localWeather,
 } from '../shared/rules.js';
+import { WEATHER, FOUL_WEATHER_SECTIONS, BREAKDOWN, breakdownColumn } from '../shared/tables.js';
+import { WEAPONS } from '../shared/weapons.js';
 
 const RES = ['fuel', 'water', 'ammo', 'stores'];
 const other = (side) => (side === 'axis' ? 'cw' : 'axis');
@@ -44,7 +47,7 @@ export const gameMap = () => (mapCache ||= buildMap());
 
 export function createGame(options = {}) {
   const g = {
-    version: 5,
+    version: 6,
     scenario: SCENARIO.id,
     turn: SCENARIO.firstTurn,
     opStage: 0,
@@ -64,6 +67,8 @@ export function createGame(options = {}) {
     lastCombat: null,
     decision: null, // pending choice by the non-phasing side: { kind: 'reaction'|'defence', side, role, ... }
     prisoners: { axis: 0, cw: 0 },
+    weather: { type: 'normal', sections: [], roll: null },
+    broken: [], // broken-down vehicle markers [21.42]
     winner: null,
     over: false,
     seed: (Date.now() ^ 0x9e3779b9) >>> 0,
@@ -137,9 +142,23 @@ function setStep(g, step) {
   if (step === 'movecombat') g.seg = { n: 1, mode: 'move', moved: [], attacked: [], frozen: [] };
 }
 
+// Weather Determination: the Initiative holder rolls on the season's row [29.1].
+function rollWeather(g) {
+  const season = seasonOfTurn(g.turn);
+  const roll = d6(g) * 10 + d6(g);
+  const type = WEATHER[season][roll];
+  let sections = [];
+  if (type === 'sand' || type === 'rain') sections = FOUL_WEATHER_SECTIONS[d6(g)];
+  g.weather = { type, sections, roll, season };
+  const where = sections.length ? ` over map section${sections.length > 1 ? 's' : ''} ${sections.join(', ')}` : '';
+  log(g, 'all', `Weather (${season}, roll ${roll}): ${{ normal: 'normal', hot: 'hot', sand: 'a sandstorm', rain: 'a rainstorm' }[type]}${where}.`);
+}
+export const weatherAt = (g, hex) => localWeather(g.weather, gameMap(), hex);
+
 function startOpStage(g, n) {
   g.opStage = n;
-  for (const u of g.units) u.cpUsed = 0;
+  for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; }
+  rollWeather(g);
   setStep(g, 'declare');
 }
 
@@ -155,7 +174,7 @@ function advance(g) {
     case 'air': setStep(g, 'convoy'); break;
     case 'convoy': startOpStage(g, 1); break;
     case 'declare': beginHalf(g, 'A'); break;
-    case 'movecombat': setStep(g, 'trucks'); break;
+    case 'movecombat': setStep(g, 'trucks'); repairPhase(g, phasingSide(g)); break;
     case 'trucks':
       if (g.half === 'A') beginHalf(g, 'B');
       else endOpStage(g);
@@ -390,7 +409,7 @@ export function act(g, side, a) {
 export function planMove(g, u, path, { reaction = false } = {}) {
   if (!Array.isArray(path) || !path.length) return 'Empty path.';
   const map = gameMap();
-  let cp = 0, bp = 0;
+  let cp = 0, bp = 0, sandCp = 0;
   const startInZoc = inEnemyZoc(g, u, u.pos);
   if (!reaction && (startInZoc || u.contact)) cp += u.engaged ? CP.disengage : CP.breakContact; // [8.15, 8.24]; reaction pays none [8.52]
   let cur = u.pos;
@@ -399,16 +418,18 @@ export function planMove(g, u, path, { reaction = false } = {}) {
     if (!neighbours(...cur).some(([c, r]) => c === step[0] && r === step[1])) return 'Path is not continuous.';
     if (step[0] < 0 || step[1] < 0 || step[0] >= MAP_COLS || step[1] >= MAP_ROWS) return 'Off the map.';
     if (g.units.some((e) => e.side !== u.side && e.pos[0] === step[0] && e.pos[1] === step[1])) return 'Cannot enter an enemy-occupied hex.';
-    const c = stepCost(map, cur, step, { motorised: isMotorised(u) });
+    const wx = weatherAt(g, step);
+    const c = stepCost(map, cur, step, { motorised: isMotorised(u), weather: wx });
     if (!c) return `Cannot enter ${key(...step)} (${TERRAIN[map.tiles[key(...step)]?.t]?.label || 'off map'}).`;
     cp += c.cp; bp += c.bp;
+    if (wx === 'sand') sandCp += c.cp;
     const intoZoc = inEnemyZoc(g, u, step);
     if (intoZoc && reaction) return 'Reacting units may not enter an enemy zone of control [8.55].';
     if (intoZoc && i === 0 && startInZoc) return 'Cannot move directly from one enemy-controlled hex to another [10.24].';
     if (intoZoc && i < path.length - 1) return 'Units must stop on entering an enemy zone of control [10.23].';
     cur = step;
   }
-  return { cp, bp };
+  return { cp, bp, sandCp };
 }
 
 function actMove(g, side, a) {
@@ -427,6 +448,8 @@ function actMove(g, side, a) {
   const err = doMove(g, u, a.path, plan);
   if (err) return err;
   g.seg.moved.push(u.id);
+  checkBreakdown(g, u, u.start);
+  captureBroken(g, u);
   offerReaction(g, u);
   // Totally disorganised enemies surrender when approached [6.26].
   for (const e of g.units.filter((x) => x.side !== side && collapsed(x) && distance(x.pos, u.pos) === 1)) {
@@ -450,10 +473,115 @@ function doMove(g, u, path, plan) {
   }
   spendCP(g, u, plan.cp);
   u.bp += plan.bp;
+  u.sandCp = (u.sandCp || 0) + (plan.sandCp || 0);
+  u.start = u.pos;
   u.pos = dest;
   u.contact = false;
   u.engaged = false;
   return null;
+}
+
+// ---------- Breakdown [21.0] and repair [22.0] ----------
+// Tanks break down according to the distance and terrain covered. Trucks and armoured cars are not
+// yet modelled at formation level (they come with the truck/logistics rules), so only tank points are checked.
+const BROKEN_NAMES = (w) => w;
+const TOTAL = (els) => els.reduce((s, e) => s + e.toe, 0);
+
+// Percentage that break down for a group, given base column and shifts [21.32-21.37].
+export function breakdownPercent(baseCol, shift, roll) {
+  if (baseCol === 0) return 0; // 3 points or fewer: no check [21.27]
+  const col = Math.min(8, baseCol + shift);
+  if (col < 1) return 0; // adjusted below the 4-10 column: no breakdown [21.33]
+  return BREAKDOWN[col][roll] ?? 0;
+}
+
+function checkBreakdown(g, u, from) {
+  if (!u.motorised || !u.elements?.length) return;
+  const base = breakdownColumn(u.bp || 0);
+  if (base === 0 || base <= (u.bpCol ?? -1)) return; // only re-check on moving into a higher column [21.26]
+  u.bpCol = base;
+  const hot = g.weather.type === 'hot' ? 1 : 0;
+  const sand = (u.sandCp || 0) * 2 >= Math.max(1, u.cpUsed) && u.sandCp > 0 ? 1 : 0; // [21.37d]
+  // One check per group of tank points with the same adjustment rating [21.28].
+  const groups = new Map();
+  for (const e of u.elements) {
+    const w = WEAPONS[e.w];
+    if (!w || w.kind !== 'tank' || e.toe <= 0) continue;
+    if (!groups.has(w.bdr)) groups.set(w.bdr, []);
+    groups.get(w.bdr).push(e);
+  }
+  for (const [bdr, els] of groups) {
+    const total = TOTAL(els);
+    const roll = d6(g) * 10 + d6(g);
+    const pct = breakdownPercent(base, bdr + hot + sand, roll);
+    if (!pct) continue;
+    if (total === 1 && pct === 10) continue; // [21.35]
+    let n = Math.min(total, Math.ceil((pct / 100) * total - 1e-9));
+    // Spread as evenly as possible across the types [21.36].
+    const out = els.map((e) => ({ e, n: Math.floor((n * e.toe) / total) }));
+    let left = n - out.reduce((x, o) => x + o.n, 0);
+    for (const o of [...out].sort((a, b) => (b.e.toe - b.n) - (a.e.toe - a.n))) { if (left <= 0) break; if (o.n < o.e.toe) { o.n++; left--; } }
+    // Near a larger enemy force at least half stay where the unit started [21.41].
+    const threatened = from && g.units.some((x) => x.side !== u.side && isCombatUnit(x) && sizeRank(x) > 1 && distance(x.pos, from) <= 2);
+    let atStart = threatened ? Math.ceil(n / 2) : 0;
+    for (const { e, n: k } of out) {
+      if (!k) continue;
+      const here = Math.max(0, k - Math.min(atStart, k)); atStart -= k - here;
+      const there = k - here;
+      e.toe -= k;
+      if (here) addBroken(g, u, e.w, here, u.pos);
+      if (there) addBroken(g, u, e.w, there, from);
+      log(g, u.side, `${k} ${e.w} of ${u.name} break down (${pct}% of ${total}).`);
+    }
+    syncStr(u);
+  }
+}
+
+function addBroken(g, u, w, n, pos) {
+  const m = g.broken.find((b) => b.side === u.side && b.parent === u.id && b.w === w && b.pos[0] === pos[0] && b.pos[1] === pos[1]);
+  if (m) m.n += n;
+  else g.broken.push({ id: `bd${g.broken.length ? Math.max(...g.broken.map((b) => +b.id.slice(2))) + 1 : 1}`, side: u.side, nation: u.nation, parent: u.id, w, n, pos: [...pos] });
+}
+
+// A combat unit of battalion size or larger moving next to enemy broken-down vehicles captures them [21.52-21.54].
+function captureBroken(g, u) {
+  if (!isCombatUnit(u) || sizeRank(u) < 1) return;
+  for (const b of g.broken.filter((x) => x.side !== u.side)) {
+    if (distance(b.pos, u.pos) !== 1) continue;
+    if (g.units.some((x) => x.side === b.side && x.pos[0] === b.pos[0] && x.pos[1] === b.pos[1])) continue; // stacked with friends [21.53]
+    if (!stepCost(gameMap(), u.pos, b.pos, { motorised: u.motorised })) continue; // adjacent through passable terrain [21.54]
+    log(g, 'all', `${u.name} captures ${b.n} broken-down ${b.w} at ${key(...b.pos)}.`);
+    b.side = u.side;
+  }
+}
+
+// Field repair of broken-down tanks in the Repair Phase [22.2]: Broken Down Vehicle Repair Table, Field column.
+const FIELD_TANK_PCT = { 1: 25, 2: 10, 3: 10, 4: 10, 5: 0, 6: 0 };
+function repairPhase(g, side) {
+  for (const b of g.broken.filter((x) => x.side === side && x.n > 0)) {
+    const stack = g.units.filter((x) => x.side === side && x.pos[0] === b.pos[0] && x.pos[1] === b.pos[1]);
+    if (!stack.length) continue; // needs a friendly unit stacked there [22.22]
+    if (inEnemyZoc(g, stack[0], b.pos) || g.units.some((x) => x.side !== side && distance(x.pos, b.pos) === 0)) continue; // enemy-controlled hex [22.13a]
+    const wx = weatherAt(g, b.pos);
+    if (wx === 'sand' || wx === 'rain') continue; // [22.13d]
+    // One Fuel Point per tank point attempted, taken from the units there (placeholder until the logistics game) [22.26].
+    let fuel = stack.reduce((x, y) => x + (y.fuel || 0), 0);
+    const attempt = Math.min(b.n, fuel);
+    if (!attempt) continue;
+    let need = attempt;
+    for (const x of stack) { const t = Math.min(need, x.fuel || 0); x.fuel -= t; need -= t; }
+    const pct = FIELD_TANK_PCT[d6(g)];
+    if (!pct || (attempt === 1 && pct === 10)) { log(g, side, `Field repair of ${b.w} at ${key(...b.pos)} fails.`); continue; }
+    const fixed = Math.min(attempt, Math.ceil((pct / 100) * attempt - 1e-9));
+    const parent = g.units.find((x) => x.id === b.parent && x.side === side) || stack.find((x) => isCombatUnit(x));
+    if (!parent) continue;
+    const el = parent.elements.find((e) => e.w === b.w);
+    if (el) el.toe = Math.min(el.max ?? el.toe + fixed, el.toe + fixed); else parent.elements.push({ w: b.w, toe: fixed, max: fixed });
+    b.n -= fixed;
+    syncStr(parent);
+    log(g, side, `${fixed} ${b.w} repaired in the field and returned to ${parent.name}.`);
+  }
+  g.broken = g.broken.filter((b) => b.n > 0);
 }
 
 // ---------- Reaction [8.5] ----------
@@ -493,6 +621,7 @@ function actReact(g, side, a) {
   if (typeof plan === 'string') return plan;
   const err = doMove(g, u, a.path, plan);
   if (err) return err;
+  checkBreakdown(g, u, u.start);
   d.moved.push(u.id);
   log(g, 'all', `${u.name} reacts, falling back to ${key(...u.pos)}.`);
   if (d.moved.length >= d.unitIds.length) g.decision = null;
@@ -731,6 +860,8 @@ export function viewFor(g, side) {
     decision: g.decision ? { ...g.decision, mine: g.decision.side === side } : null,
     lastCombat: g.lastCombat,
     prisoners: g.prisoners,
+    weather: g.weather,
+    broken: g.broken.filter((b) => b.side === side || seen(b.pos)).map(({ id, side: s, nation, w, n, pos }) => ({ id, side: s, nation, w, n, pos })),
     winner: g.winner,
     over: g.over,
     log: g.log.filter((l) => l.side === 'all' || l.side === side).slice(-100),

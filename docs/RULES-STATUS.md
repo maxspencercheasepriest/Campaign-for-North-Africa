@@ -29,11 +29,11 @@ Legend: ✅ implemented · 🟡 partly or simplified · ⬜ not started · 🔶 
 | 18 | Reserve status | ⬜ | |
 | 19 | Organisation and reorganisation | ⬜ | Needs the Organisation-at-Arrival data. |
 | 20 | Reinforcements, replacements, withdrawals | 🟡 | A few reinforcements arrive. Needs the real schedules. |
-| 21–22 | Breakdown and repair | 🟡 | Breakdown points are counted but not yet rolled. |
+| 21–22 | Breakdown and repair | 🟡 | Done: breakdown points accumulate and are rolled when a unit stops (Breakdown Table, column shifts for tank ratings, hot weather and sandstorm, no re-roll unless a higher column is reached, at least half stay behind when an enemy force larger than a battalion is within 2 hexes), broken-down markers, capture by an adjacent battalion-size unit, automatic field repair of tanks (die roll, 1 fuel per tank, not in rain/sand or enemy zones). Not yet: trucks and armoured cars (no truck points at formation level), towing, repair facilities, destroyed-tank repair, retreat breakdown. |
 | 23–26 | Engineers, construction, fortifications, minefields | ⬜ | Minefield and fortification terrain costs are in the chart data. |
 | 27 | Desert raiders and commandos | ⬜ | |
 | 28 | Prisoners | ⬜ | |
-| 29 | Weather | ⬜ | |
+| 29 | Weather | 🟡 | Done: rolled each Operations Stage by the Initiative holder from the season's row (seasons by date, 29.1), Foul Weather Location Table, hot, sandstorm (double move cost, no storm over delta) and rainstorm (roads cost as tracks, wadis and rivers uncrossable except by road/rail, deltas road-only). Shown on the map. Not yet: 5% fuel/water loss in hot weather, double water use, air effects, wells filling, construction bans. Note: the printed Weather Table lists Game-Turn ranges that do not match the 29.1 dates, so the dates are used. |
 | 30 | Mediterranean Fleet | ⬜ | |
 | 31 | Rommel | 🟡 | His presence raises Axis initiative. |
 | 32 | Abstract logistics and air | 🔶 | Placeholder air points, convoys, trucking and end-of-turn supply. |
