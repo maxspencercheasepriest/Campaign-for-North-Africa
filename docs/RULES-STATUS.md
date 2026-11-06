@@ -1,0 +1,55 @@
+# Rules implementation status
+
+This checklist tracks which parts of the rules are in the game. Section numbers follow the original rulebook, so you can look each one up. Our code and wording are our own.
+
+Legend: ✅ implemented · 🟡 partly or simplified · ⬜ not started · 🔶 placeholder (stand-in rules until the real ones are written)
+
+## Land Game
+
+| § | Section | Status | Notes |
+|---|---|---|---|
+| 5 | Sequence of play | ✅ | Game-Turn = Initiative Stage → Naval Convoy Stage → 3 Operations Stages. In each stage Player A goes, then Player B. Phases not built yet are skipped. |
+| 6 | Capability Points and Cohesion | ✅ | CP tracked per Ops Stage. Each point over the CPA becomes a Disorganisation Point. Resting restores up to +5 (never above 0). A cleared hex gives +3. 30% losses cost −3. At −26 a unit can't act and surrenders when approached. Not yet: cohesion averaging across stacks (6.27–6.28), and its effect on morale. |
+| 7 | Initiative | ✅ | Die roll + rating from chart 7.2 (by date, Rommel, German presence). The holder chooses first or last in each stage. The scenario can fix the holder for GT1. |
+| 8.1–8.4 | Land movement and terrain | ✅ | Full Terrain Effects Chart: hex costs (motorised / non-motorised), roads, tracks, hexsides (slopes, ridges, escarpments up/down, wadis, rivers) and prohibitions. Foot units are capped at 150% of CPA. Breakdown points accumulate. Not yet: off-road markers, road stacking (9.33), rainstorm wadis, rule 8.19 (Marble Arch line). |
+| 8.2 | Continual movement | ✅ | Repeated move → combat segments. Units that end a segment more than 2 hexes from the enemy are frozen for the rest of the phase. |
+| 8.5 | Reaction | ⬜ | |
+| 8.6 | Breaking off | 🟡 | Contact costs 2 CP and Engaged costs 4. "Engaged" currently comes from the placeholder combat. |
+| 8.7 | Rail movement | ⬜ | |
+| 8.8–8.9 | Tripoli/Tunisia, motorised units and trucks | ⬜ | |
+| 9 | Stacking | 🟡 | Stacking points (division 5, brigade 2, battalion 1, company 0) against each terrain's limit. Not yet: unit equivalents and shells (9.2), road/track limit (9.33). |
+| 10 | Zones of control | ✅ | Who exerts a ZOC, and that it doesn't reach across escarpments, rivers or the sea, or into hexes the unit couldn't enter. Units stop on entry, can't move ZOC-to-ZOC, and a friendly unit in the hex negates the ZOC. Every enemy hex exerting a ZOC must be attacked. Not yet: the 10-point defensive close assault threshold (needs unit ratings), holding-off barrage, the 3-hex retreat (10.36). |
+| 11 | Combat system | 🔶 | CP costs are real; the resolution is a stand-in. |
+| 12 | Barrage | ⬜ | |
+| 13 | Retreat before assault | ⬜ | |
+| 14 | Anti-armour combat | ⬜ | |
+| 15 | Close assault | ⬜ | |
+| 16 | Patrols and reconnaissance | ⬜ | Fog of war is a simple 3-hex sight range for now. |
+| 17 | Morale | ⬜ | |
+| 18 | Reserve status | ⬜ | |
+| 19 | Organisation and reorganisation | ⬜ | Needs the Organisation-at-Arrival data. |
+| 20 | Reinforcements, replacements, withdrawals | 🟡 | A few reinforcements arrive. Needs the real schedules. |
+| 21–22 | Breakdown and repair | 🟡 | Breakdown points are counted but not yet rolled. |
+| 23–26 | Engineers, construction, fortifications, minefields | ⬜ | Minefield and fortification terrain costs are in the chart data. |
+| 27 | Desert raiders and commandos | ⬜ | |
+| 28 | Prisoners | ⬜ | |
+| 29 | Weather | ⬜ | |
+| 30 | Mediterranean Fleet | ⬜ | |
+| 31 | Rommel | 🟡 | His presence raises Axis initiative. |
+| 32 | Abstract logistics and air | 🔶 | Placeholder air points, convoys, trucking and end-of-turn supply. |
+
+## Air Game (33–46) and Logistics Game (47–58)
+
+All ⬜ for now. The placeholder air step and supply rules stand in for them.
+
+## Scenarios (59–64)
+
+| Scenario | Status |
+|---|---|
+| 60.22 Graziani's Offensive (GT1–6) | 🟡 Turn limits and GT1 initiative are in. The map, setup hexes and victory conditions (60.71) still need the real map. |
+
+## Data still to enter
+
+- **Map:** the five map sections are in the PDF scan. They need digitising (terrain, hexsides, roads and tracks, towns), and the game needs the real hex numbering (e.g. C4807).
+- **Units:** the Organisation-at-Arrival charts and the Unit Characteristics charts (CPA, ratings, TOE).
+- **Reinforcement and withdrawal schedules.**

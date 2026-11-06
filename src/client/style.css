@@ -77,3 +77,10 @@ tr.warn td { color: var(--red); font-weight: bold; }
 .chatform { display: flex; gap: 4px; }
 .chatform input { flex: 1; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 10px 16px; z-index: 20; max-width: 80vw; }
+
+.pill.waiting { background: #6b5a36; border-color: #6b5a36; }
+.btnrow { display: flex; gap: 6px; margin: 8px 0; }
+.btnrow button { flex: 1; }
+.unitcard { background: #e6dbc0; padding: 6px 8px; margin: 6px 0; font-size: 12px; line-height: 1.5; }
+.bad { color: var(--red); }
+.ok { color: var(--green); }

@@ -10,7 +10,7 @@ A team-based online game of the Western Desert campaign, 1940–43. It's a digit
 
 ## Status
 
-This is a playable prototype of the core systems: air allocation, the Malta/convoy duel, port capacity, rear-area trucking, simultaneous movement with zones of control, combat, water, fuel evaporation, ammunition, and the pasta-water rule. The rule numbers are **placeholders**. The next step is replacing each stage with the full rules, transcribed into data tables in our own words.
+The real Land Game turn structure is in: initiative, Operations Stages with Player A and Player B, capability points and cohesion, the full Terrain Effects Chart, continual movement, stacking and zones of control. Combat, supply and air are still placeholders. See **[docs/RULES-STATUS.md](docs/RULES-STATUS.md)** for the section-by-section checklist.
 
 ## Download
 

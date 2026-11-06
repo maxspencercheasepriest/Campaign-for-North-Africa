@@ -1,8 +1,9 @@
-// Prototype scenario: September 1940, the Italian advance into Egypt.
-// The map is a schematic of the coast from Tripoli to Alexandria — our own layout, not the original game's map.
-// All numbers here are PLACEHOLDERS until the real rules/charts are transcribed into data.
+// Prototype scenario: Graziani's Offensive, from Game-Turn 1 (September 1940).
+// The MAP here is a schematic stand-in until the real five map sections are digitised.
+// Unit values (CPA, strength, supplies) are PLACEHOLDERS until the Organisation-at-Arrival charts are entered.
 
-import { key } from './hex.js';
+import { key, neighbours } from './hex.js';
+import { edgeKey } from './rules.js';
 
 export const MAP_COLS = 64;
 export const MAP_ROWS = 18;
@@ -20,15 +21,13 @@ export const ROLE_NAMES = {
   front: 'Front-line Commander',
 };
 
-// Sequence of play for one Operations Stage. Each stage is owned by a role;
-// both sides plan at once and the stage resolves when both are ready.
-export const STAGES = [
-  { id: 'air', role: 'air', name: 'Air Assignment' },
-  { id: 'convoy', role: 'logistics', name: 'Naval Convoys' },
-  { id: 'rear', role: 'rear', name: 'Rear Area Transport' },
-  { id: 'move', role: 'front', name: 'Movement' },
-  { id: 'combat', role: 'front', name: 'Combat' },
-];
+export const SCENARIO = {
+  id: 'graziani',
+  name: "Graziani's Offensive",
+  firstTurn: 1,
+  lastTurn: 6,
+  initiativeFirstTurn: 'axis', // the Italians hold the initiative for Game-Turn 1
+};
 
 function coastRow(c) {
   if (c >= 10 && c <= 24) return 3 + Math.round(4 * Math.sin((Math.PI * (c - 10)) / 14)); // Gulf of Sirte
@@ -37,11 +36,11 @@ function coastRow(c) {
 }
 
 export const PORTS = [
-  { id: 'tripoli', name: 'Tripoli', col: 2, capacity: 1.0 },
+  { id: 'tripoli', name: 'Tripoli', col: 2, capacity: 1.0, city: true },
   { id: 'misurata', name: 'Misurata', col: 7, capacity: 0.25 },
   { id: 'sirte', name: 'Sirte', col: 14, capacity: 0.2 },
   { id: 'agheila', name: 'El Agheila', col: 21, capacity: 0.15 },
-  { id: 'benghazi', name: 'Benghazi', col: 27, capacity: 0.6 },
+  { id: 'benghazi', name: 'Benghazi', col: 27, capacity: 0.6, city: true },
   { id: 'derna', name: 'Derna', col: 35, capacity: 0.25 },
   { id: 'tobruk', name: 'Tobruk', col: 40, capacity: 0.5 },
   { id: 'bardia', name: 'Bardia', col: 44, capacity: 0.25 },
@@ -49,10 +48,9 @@ export const PORTS = [
   { id: 'barrani', name: 'Sidi Barrani', col: 49, capacity: 0.1 },
   { id: 'matruh', name: 'Mersa Matruh', col: 54, capacity: 0.35 },
   { id: 'alamein', name: 'El Alamein', col: 59, capacity: 0.1 },
-  { id: 'alexandria', name: 'Alexandria', col: 62, capacity: 1.0 },
+  { id: 'alexandria', name: 'Alexandria', col: 62, capacity: 1.0, city: true },
 ].map((p) => ({ ...p, row: coastRow(p.col) }));
 
-// Tiny deterministic RNG so the map is identical for everyone.
 function mulberry32(a) {
   return () => {
     a |= 0; a = (a + 0x6d2b79f5) | 0;
@@ -62,67 +60,91 @@ function mulberry32(a) {
   };
 }
 
+// Returns { tiles, hexsides, roads:Set, tracks:Set } using the Terrain Effects Chart's terrain types.
 export function buildMap() {
   const rand = mulberry32(1940);
   const tiles = {};
+  const hexsides = {};
+  const roads = new Set();
+  const tracks = new Set();
   for (let c = 0; c < MAP_COLS; c++) {
     const coast = coastRow(c);
     for (let r = 0; r < MAP_ROWS; r++) {
-      let t = 'desert';
+      let t = rand() < 0.35 ? 'gravel' : 'clear';
       if (r < coast) t = 'sea';
-      else if (r === coast) t = 'coast';
-      else if (c >= 28 && c <= 36 && r <= coast + 2) t = 'rough'; // Jebel Akhdar
-      else if (c >= 44 && c <= 50 && r === coast + 1) t = 'escarpment';
-      else if (c >= 55 && c <= 60 && r >= 10 && r <= 16) t = 'depression'; // Qattara
-      else if (rand() < 0.08) t = 'rough';
-      tiles[key(c, r)] = { t, road: r === coast };
+      else if (c >= 28 && c <= 36 && r > coast && r <= coast + 2) t = rand() < 0.3 ? 'mountain' : 'rough'; // Jebel Akhdar
+      else if (c >= 55 && c <= 60 && r >= 10 && r <= 16) t = 'saltmarsh'; // Qattara Depression
+      else if (r >= 15 && c <= 40) t = 'desert'; // edge of the sand sea
+      else if (rand() < 0.06) t = 'rough';
+      tiles[key(c, r)] = { t };
     }
   }
-  return tiles;
-}
+  for (const p of PORTS) if (p.city) tiles[key(p.col, p.row)].t = 'majorcity';
 
-export const TERRAIN = {
-  sea: { cost: Infinity, defence: 1, label: 'Sea' },
-  coast: { cost: 1, defence: 1, label: 'Coast' },
-  desert: { cost: 1, defence: 1, label: 'Open desert' },
-  rough: { cost: 2, defence: 1.5, label: 'Rough' },
-  escarpment: { cost: 3, defence: 2, label: 'Escarpment' },
-  depression: { cost: Infinity, defence: 1, label: 'Qattara Depression (impassable)' },
-};
-export const ROAD_COST = 0.5;
+  // Coast road (Via Balbia): link each coast hex to the next column's coast hex.
+  const coastHex = (c) => [c, coastRow(c)];
+  for (let c = 0; c < MAP_COLS - 1; c++) {
+    const a = coastHex(c), b = coastHex(c + 1);
+    if (neighbours(...a).some(([x, y]) => x === b[0] && y === b[1])) roads.add(edgeKey(a, b));
+    else {
+      // Coast steps by more than one row: route through the intermediate hex.
+      const mid = neighbours(...a).find(([x, y]) => neighbours(x, y).some(([p, q]) => p === b[0] && q === b[1]) && tiles[key(x, y)]?.t !== 'sea');
+      if (mid) { roads.add(edgeKey(a, mid)); roads.add(edgeKey(mid, b)); }
+    }
+  }
+  // A desert track inland from Bardia south-east towards Sidi Barrani's hinterland, and the Trigh Capuzzo-like
+  // track from Tobruk eastwards (schematic).
+  const trackLine = (pts) => { for (let i = 0; i < pts.length - 1; i++) tracks.add(edgeKey(pts[i], pts[i + 1])); };
+  trackLine([[40, 4], [41, 5], [42, 5], [43, 6], [44, 6], [45, 7], [46, 7], [47, 8], [48, 8], [49, 9], [50, 9], [51, 9]]);
+  trackLine([[46, 4], [46, 5], [46, 6], [46, 7]]); // track down the escarpment near Sollum ("Halfaya")
+
+  // The coastal escarpment between Bardia and Sidi Barrani: low ground (coast) on the north side.
+  for (let c = 44; c <= 51; c++) {
+    const up = [c, coastRow(c) + 2], down = [c, coastRow(c) + 1];
+    hexsides[edgeKey(up, down)] = { type: 'escarpment', down: key(...down) };
+  }
+  // Wadis cutting the Jebel Akhdar.
+  for (const c of [29, 31, 33, 35]) hexsides[edgeKey([c, 3], [c + 1, 3 + (c & 1 ? 1 : 0)])] = { type: 'wadi' };
+
+  return { tiles, hexsides, roads, tracks };
+}
 
 const port = (id) => PORTS.find((p) => p.id === id);
 const at = (id, dc = 0, dr = 0) => [port(id).col + dc, port(id).row + dr];
 
-// type: inf (foot), mot (motorised), arm (armour)
-const U = (id, side, nation, name, type, str, pos) => ({
-  id, side, nation, name, type, str, maxStr: str,
-  mp: type === 'inf' ? 3 : 6,
-  fuel: type === 'inf' ? 0 : 6, water: 3, ammo: 3,
+// size: division | brigade | battalion (stacking points 5 / 2 / 1)
+// cpa: Capability Point Allowance (<= 10 means foot-bound)
+const U = (id, side, nation, name, type, size, cpa, str, pos, extra = {}) => ({
+  id, side, nation, name, type, size, cpa, str, maxStr: str,
+  motorised: cpa > 10,
+  fuel: cpa > 10 ? 30 : 0, water: 3, ammo: 3,
+  cpUsed: 0, cohesion: 0, bp: 0,
   pos,
+  ...extra,
 });
 
 export function initialUnits() {
   return [
-    U('it-1lib', 'axis', 'it', '1st Libyan Div', 'inf', 5, at('sollum', -1, 1)),
-    U('it-2lib', 'axis', 'it', '2nd Libyan Div', 'inf', 5, at('bardia', 0, 2)),
-    U('it-62', 'axis', 'it', '62nd Marmarica Div', 'inf', 6, at('bardia')),
-    U('it-63', 'axis', 'it', '63rd Cirene Div', 'inf', 6, at('bardia', -2, 1)),
-    U('it-mal', 'axis', 'it', 'Maletti Group', 'mot', 4, at('sollum', 0, 3)),
-    U('it-23m', 'axis', 'it', '1st Blackshirt Div', 'inf', 5, at('tobruk')),
-    U('it-pav', 'axis', 'it', '17th Pavia Div', 'inf', 6, at('tripoli', 1, 1)),
-    U('it-bol', 'axis', 'it', '25th Bologna Div', 'inf', 6, at('misurata')),
-    U('cw-7arm', 'cw', 'uk', '7th Armoured Div', 'arm', 6, at('barrani', 2, 3)),
-    U('cw-4ind', 'cw', 'in', '4th Indian Div', 'inf', 6, at('matruh', -1, 1)),
-    U('cw-mat', 'cw', 'uk', 'Matruh Garrison', 'inf', 4, at('matruh')),
-    U('cw-16', 'cw', 'uk', '16th Infantry Bde', 'inf', 3, at('alamein')),
+    U('it-1lib', 'axis', 'it', '1st Libyan Div', 'inf', 'division', 8, 5, at('sollum', -1, 3)),
+    U('it-2lib', 'axis', 'it', '2nd Libyan Div', 'inf', 'division', 8, 5, at('bardia', 0, 3)),
+    U('it-62', 'axis', 'it', '62nd Marmarica Div', 'inf', 'division', 8, 6, at('bardia')),
+    U('it-63', 'axis', 'it', '63rd Cirene Div', 'inf', 'division', 8, 6, at('bardia', -2, 1)),
+    U('it-mal', 'axis', 'it', 'Maletti Group', 'mot', 'division', 20, 4, at('sollum', 0, 4)),
+    U('it-1cc', 'axis', 'it', '1st Blackshirt Div', 'inf', 'division', 8, 5, at('tobruk')),
+    U('it-pav', 'axis', 'it', '17th Pavia Div', 'inf', 'division', 8, 6, at('tripoli', 1, 1)),
+    U('it-bol', 'axis', 'it', '25th Bologna Div', 'inf', 'division', 8, 6, at('misurata')),
+    U('cw-7arm', 'cw', 'uk', '7th Armoured Div', 'arm', 'division', 25, 6, at('barrani', 2, 3)),
+    U('cw-4ind', 'cw', 'in', '4th Indian Div', 'mot', 'division', 20, 6, at('matruh', -1, 1)),
+    U('cw-mat', 'cw', 'uk', 'Matruh Garrison', 'inf', 'brigade', 8, 4, at('matruh')),
+    U('cw-16', 'cw', 'uk', '16th Infantry Bde', 'inf', 'brigade', 10, 3, at('alamein')),
   ];
 }
 
 export const REINFORCEMENTS = [
-  { turn: 4, port: 'alexandria', unit: U('cw-6aus', 'cw', 'au', '6th Australian Div', 'inf', 6, null) },
-  { turn: 6, port: 'tripoli', unit: U('de-5l', 'axis', 'de', '5th Light Div', 'arm', 6, null) },
-  { turn: 8, port: 'alexandria', unit: U('cw-2nz', 'cw', 'nz', '2nd New Zealand Div', 'inf', 6, null) },
+  { turn: 13, port: 'alexandria', unit: U('cw-6aus', 'cw', 'au', '6th Australian Div', 'inf', 'division', 10, 6, null) },
+  { turn: 22, port: 'tripoli', unit: U('de-5l', 'axis', 'de', '5th Light Div', 'arm', 'division', 25, 6, null) },
+  { turn: 22, port: 'tripoli', unit: U('de-dak', 'axis', 'de', 'DAK HQ (Rommel)', 'hq', 'battalion', 30, 1, null, { rommel: true }) },
+  { turn: 26, port: 'alexandria', unit: U('cw-2nz', 'cw', 'nz', '2nd New Zealand Div', 'inf', 'division', 10, 6, null) },
 ];
 
 const D = (fuel, water, ammo, stores) => ({ fuel, water, ammo, stores });
@@ -143,13 +165,10 @@ export function initialPortOwners() {
   return owners;
 }
 
+// ---- Placeholders until the logistics rules (32.0 / 49.0-58.0) are implemented ----
 export const AIR_POINTS = { axis: 6, cw: 5 };
 export const TRUCK_CAPACITY = { axis: 60, cw: 60 };
-export const CONVOY = {
-  axis: D(80, 40, 50, 50),
-  cw: D(70, 60, 50, 50),
-};
-// Fuel evaporation per stage: British 4-gallon "flimsies" leaked badly.
+export const CONVOY = { axis: D(80, 40, 50, 50), cw: D(70, 60, 50, 50) };
 export const FUEL_EVAPORATION = { axis: 0.03, cw: 0.07 };
 export const SUPPLY_RANGE = 3;
 export const VISION_RANGE = 3;

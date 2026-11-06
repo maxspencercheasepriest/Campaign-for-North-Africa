@@ -1,7 +1,8 @@
 import { key, parseKey, distance, neighbours, hexToPixel, pixelToHex } from '/shared/hex.js';
 import {
-  MAP_COLS, MAP_ROWS, SIDES, SIDE_NAMES, ROLES, ROLE_NAMES, PORTS, TERRAIN, ROAD_COST, VISION_RANGE, buildMap,
+  MAP_COLS, MAP_ROWS, SIDES, SIDE_NAMES, ROLES, ROLE_NAMES, PORTS, VISION_RANGE, buildMap,
 } from '/shared/scenario.js';
+import { TERRAIN, HEXSIDES, STACKING_POINTS, NON_MOTORISED_VOLUNTARY_LIMIT, CP, stepCost, edgeKey } from '/shared/rules.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -13,7 +14,8 @@ const store = {
 const params = new URLSearchParams(location.search);
 const hostToken = params.get('host');
 const inviteUrl = params.get('invite');
-const TILES = buildMap();
+const MAP = buildMap();
+const TILES = MAP.tiles;
 
 let ws;
 let S = null; // last state from server
@@ -79,7 +81,7 @@ if (window.desktop) {
   $('launcherBtn').classList.remove('hidden');
   $('launcherBtn').onclick = () => { if (confirm('Leave this game? If you are hosting, everyone will be disconnected (the campaign is saved).')) window.desktop.backToLauncher(); };
 }
-$('forceBtn').onclick = () => { if (confirm('Resolve this stage now? Anyone not ready submits no orders.')) send({ type: 'force' }); };
+$('forceBtn').onclick = () => { if (confirm('Host override: pass the current step for whoever is holding it up (empty orders, outstanding attacks skipped)?')) send({ type: 'force' }); };
 
 // ---------- Render root ----------
 
@@ -90,8 +92,10 @@ function render() {
   $('forceBtn').classList.toggle('hidden', !(inGame && S.you.isHost));
   renderTop();
   if (!inGame) return renderLobby();
-  const sk = `${S.game.turn}:${S.game.stageIndex}`;
-  if (sk !== draftStageKey) { draftStageKey = sk; draft = S.game.myOrders ? structuredClone(S.game.myOrders) : {}; selected = null; }
+  const g = S.game;
+  const sk = `${g.turn}:${g.opStage}:${g.step}:${g.half}`;
+  if (sk !== draftStageKey) { draftStageKey = sk; draft = g.myOrders ? structuredClone(g.myOrders) : {}; }
+  if (selected && !myUnits().some((u) => u.id === selected)) selected = null;
   renderOrders();
   renderSupply();
   $('tab-staff').innerHTML = '';
@@ -101,11 +105,244 @@ function render() {
   drawMap();
 }
 
+const sideName = (s) => SIDE_NAMES[s] || '—';
+
 function renderTop() {
   if (S.phase !== 'game') { $('turnInfo').textContent = 'Lobby'; $('readyInfo').textContent = ''; return; }
-  const st = S.stages[S.game.stageIndex];
-  $('turnInfo').innerHTML = `Turn <b>${S.game.turn}</b> · <b>${esc(st.name)}</b> <span class="muted">(${esc(ROLE_NAMES[st.role])})</span>`;
-  $('readyInfo').innerHTML = SIDES.map((s) => `<span class="pill ${S.game.ready[s] ? 'ready' : ''}">${SIDE_NAMES[s]}: ${S.game.ready[s] ? 'orders in' : 'planning'}</span>`).join(' ');
+  const g = S.game;
+  const st = S.steps[g.step];
+  const where = g.opStage ? `Ops Stage ${g.opStage}` : 'Naval Convoy Stage';
+  const who = g.half ? ` · Player ${g.half}: <b>${sideName(g.phasing)}</b>` : '';
+  const seg = g.step === 'movecombat' && g.seg ? ` <span class="muted">(segment ${g.seg.n}, ${g.seg.mode})</span>` : '';
+  $('turnInfo').innerHTML = `GT <b>${g.turn}</b>/${g.lastTurn} · ${esc(g.date)} · ${where}${who} · <b>${esc(st.name)}</b>${seg}`;
+  $('readyInfo').innerHTML = `<span class="pill" title="Initiative holder this Game-Turn">Initiative: ${sideName(g.initiative?.holder)}</span> ` +
+    (g.acting || []).map((s) => `<span class="pill waiting">waiting on ${sideName(s)}</span>`).join(' ');
+}
+
+// ---------- Helpers on game state ----------
+
+const mySide = () => S.you.side;
+const myUnits = () => (S.game.units || []).filter((u) => u.side === mySide());
+const enemyUnits = () => (S.game.units || []).filter((u) => u.side !== mySide());
+const unitsAt = (c, r) => (S.game.units || []).filter((u) => u.pos[0] === c && u.pos[1] === r);
+const portName = (k) => PORTS.find((p) => key(p.col, p.row) === k)?.name;
+const hexLabel = (k) => portName(k) || `hex ${k}`;
+const isCombat = (u) => u.type !== 'hq';
+const sp = (u) => STACKING_POINTS[u.size] ?? 0;
+const myPhase = () => S.game.step === 'movecombat' && S.game.phasing === mySide();
+
+// Client-side ZOC approximation from what we can see (the host has the final say).
+function exertsZoc(e) {
+  if (!isCombat(e)) return false;
+  if (sp(e) > 1) return true;
+  return unitsAt(...e.pos).filter((x) => x.side === e.side && isCombat(x)).reduce((s, x) => s + sp(x), 0) > 1;
+}
+function zocAt(u, pos) {
+  if (unitsAt(...pos).some((x) => x !== u && x.side === u.side && isCombat(x))) return false;
+  return enemyUnits().some((e) => exertsZoc(e) && distance(e.pos, pos) === 1 && (() => {
+    const h = MAP.hexsides[edgeKey(e.pos, pos)];
+    if (h && (h.type === 'escarpment' || h.type === 'majorRiver')) return false;
+    return !!stepCost(MAP, e.pos, pos, { motorised: e.motorised ?? e.type !== 'inf' });
+  })());
+}
+
+// Cheapest CP paths for a unit, honouring terrain, enemy-occupied hexes and stop-in-ZOC.
+function reachable(u) {
+  const startZoc = zocAt(u, u.pos) || u.contact;
+  const base = startZoc ? (u.engaged ? CP.disengage : CP.breakContact) : 0;
+  const cap = u.cpa <= 10 ? u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT - u.cpUsed : Infinity;
+  const maxSteps = u.motorised ? u.fuel : Infinity;
+  const best = new Map([[key(...u.pos), { cost: base, steps: 0, prev: null, stop: false }]]);
+  const queue = [u.pos];
+  const enemyAt = new Set(enemyUnits().map((e) => key(...e.pos)));
+  const budget = Math.min(cap, u.cpa * 1.5 - u.cpUsed); // show up to 50% past the allowance
+  while (queue.length) {
+    queue.sort((a, b) => best.get(key(...a)).cost - best.get(key(...b)).cost);
+    const cur = queue.shift();
+    const cb = best.get(key(...cur));
+    if (cb.stop) continue;
+    for (const n of neighbours(...cur)) {
+      if (n[0] < 0 || n[1] < 0 || n[0] >= MAP_COLS || n[1] >= MAP_ROWS) continue;
+      const k = key(...n);
+      if (enemyAt.has(k)) continue;
+      const c = stepCost(MAP, cur, n, { motorised: u.motorised });
+      if (!c) continue;
+      const cost = cb.cost + c.cp;
+      const steps = cb.steps + 1;
+      if (cost > budget || steps > maxSteps) continue;
+      const intoZoc = zocAt(u, n);
+      if (intoZoc && cb.steps === 0 && startZoc) continue; // no ZOC-to-ZOC
+      if (!best.has(k) || best.get(k).cost > cost) { best.set(k, { cost, steps, prev: key(...cur), stop: intoZoc }); queue.push(n); }
+    }
+  }
+  return best;
+}
+function pathTo(reach, k) {
+  const path = [];
+  while (reach.get(k)?.prev) { path.unshift(parseKey(k)); k = reach.get(k).prev; }
+  return path;
+}
+
+// ---------- Orders panel ----------
+
+function renderOrders() {
+  const el = $('tab-orders');
+  const g = S.game;
+  const st = S.steps[g.step];
+  if (g.over) { el.innerHTML = `<h3>Scenario over</h3><p>${g.winner === 'draw' ? 'A draw.' : `${sideName(g.winner)} victory.`}</p>`; return; }
+  if (!mySide()) { el.innerHTML = '<p>You are not on a staff. Take a seat in the <b>Staff</b> tab.</p>'; return; }
+  const acting = (g.acting || []).includes(mySide());
+  let head = `<h3>${esc(st.name)}</h3>${st.placeholder ? '<p class="note">Placeholder rules: this step will be replaced by the full rules.</p>' : ''}`;
+  if (!acting) {
+    const who = (g.acting || []).map(sideName).join(' and ');
+    head += `<p class="note">${g.ready?.[mySide()] ? 'Your orders are in. ' : ''}Waiting on ${who || 'the host'}.</p>`;
+  } else if (!S.canAct) {
+    head += `<p class="note">${esc(S.actingFor || 'Nobody')} (${esc(ROLE_NAMES[st.role])} or stand-in) is acting for ${sideName(mySide())}. Advise them in staff chat.</p>`;
+  }
+  const body = ({ air: airForm, convoy: convoyForm, declare: declareForm, movecombat: moveCombatPanel, trucks: trucksForm })[g.step]();
+  el.innerHTML = head + body;
+  if (!S.canAct) for (const input of el.querySelectorAll('input, select, button')) input.disabled = true;
+  if (S.canAct && ['air', 'convoy', 'trucks'].includes(g.step)) {
+    const btn = document.createElement('button');
+    btn.className = 'primary';
+    btn.textContent = g.step === 'trucks' ? 'Dispatch convoys and finish' : 'Submit orders';
+    btn.onclick = () => send({ type: 'submit', orders: draft });
+    el.appendChild(btn);
+  }
+  if (!S.canAct && st.kind === 'simultaneous' && g.ready?.[mySide()] && S.you && S.canAct === false) { /* view only */ }
+  wireOrders(el);
+}
+
+function airForm() {
+  const pts = S.game.airPoints;
+  const v = (k) => draft[k] ?? 0;
+  const used = ['malta', 'escort', 'ground'].reduce((a, k) => a + v(k), 0);
+  return `<p>Allot your ${pts} air points. <b>${used}/${pts}</b> assigned.</p>
+  <label class="row">Malta missions <input type="number" min="0" max="${pts}" data-air="malta" value="${v('malta')}"></label>
+  <label class="row">Convoy escort <input type="number" min="0" max="${pts}" data-air="escort" value="${v('escort')}"></label>
+  <label class="row">Ground support <input type="number" min="0" max="${pts}" data-air="ground" value="${v('ground')}"></label>`;
+}
+
+function convoyForm() {
+  const ports = PORTS.filter((p) => S.game.portOwners[p.id] === mySide());
+  return `<p>Choose where this week's convoy unloads. Bigger ports land more of it.</p>
+  <select data-convoy><option value="">No convoy</option>${ports.map((p) => `<option value="${p.id}" ${draft.port === p.id ? 'selected' : ''}>${p.name} (capacity ${Math.round(p.capacity * 100)}%)</option>`).join('')}</select>`;
+}
+
+function declareForm() {
+  const g = S.game;
+  return `<p>${sideName(g.initiative.holder)} holds the Initiative this Game-Turn${g.initiative.rolls ? ` (rolled Axis ${g.initiative.rolls.axis}, Commonwealth ${g.initiative.rolls.cw})` : ''}.
+  For Operations Stage ${g.opStage}, choose whether to move first (Player A) or last (Player B).</p>
+  <p class="help">Going last in one stage and first in the next gives you two phases in a row.</p>
+  <div class="btnrow"><button class="act" data-declare="first">Move first</button><button class="act" data-declare="last">Move last</button></div>`;
+}
+
+function moveCombatPanel() {
+  const g = S.game;
+  if (!myPhase()) return `<p>${sideName(g.phasing)} is Player ${g.half} and is moving and fighting. Your units may only react once Reaction is implemented.</p>`;
+  const seg = g.seg;
+  const sel = myUnits().find((u) => u.id === selected);
+  let html = `<p>Segment <b>${seg.n}</b> · ${seg.mode === 'move' ? 'Movement' : 'Combat'}.</p>`;
+  if (seg.mode === 'move') {
+    html += `<p class="help">Click one of your units, then a highlighted hex. Units stop on entering an enemy zone of control. Units that end a segment more than 2 hexes from the enemy can't move again this phase.</p>`;
+    if (sel) html += unitCard(sel);
+    html += `<div class="btnrow"><button class="act" data-act="toCombat">Finish moving → combat</button></div>`;
+  } else {
+    html += combatList();
+    html += `<div class="btnrow"><button class="act" data-act="nextSegment">New movement segment</button></div>`;
+  }
+  html += obligationList();
+  html += `<button class="primary act" data-act="endPhase">End Movement &amp; Combat Phase</button>`;
+  return html;
+}
+
+function unitCard(u) {
+  const frozen = S.game.seg?.frozen?.includes(u.id);
+  const moved = S.game.seg?.moved?.includes(u.id);
+  return `<div class="unitcard"><b>${esc(u.name)}</b><br>
+    CPA ${u.cpa} · used ${fmtCP(u.cpUsed)}${u.cpa <= 10 ? ` (foot: max ${u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT})` : ''} · cohesion <b class="${u.cohesion < 0 ? 'bad' : ''}">${u.cohesion}</b><br>
+    Strength ${u.str}/${u.maxStr}${u.motorised ? ` · fuel ${u.fuel}` : ''} · water ${u.water} · ammo ${u.ammo}${u.motorised ? ` · breakdown pts ${fmtCP(u.bp)}` : ''}
+    ${frozen ? '<br><span class="bad">Cannot move again this phase.</span>' : moved ? '<br><span class="muted">Already moved this segment.</span>' : ''}</div>`;
+}
+const fmtCP = (n) => (Number.isInteger(n) ? n : n.toFixed(1));
+
+function combatList() {
+  const targets = enemyUnits().filter((e) => myUnits().some((u) => isCombat(u) && distance(u.pos, e.pos) === 1));
+  if (!targets.length) return '<p>No enemy units are adjacent.</p>';
+  return `<p class="help">Assault costs each attacker ${CP.phasingAssault} CP and each defender ${CP.defend} CP. Combat results are placeholders until the Barrage / Anti-Armour / Close Assault rules are in.</p>` +
+    targets.map((e) => {
+      const adj = myUnits().filter((u) => isCombat(u) && distance(u.pos, e.pos) === 1);
+      const t = TILES[key(...e.pos)];
+      return `<div class="attack"><b>${esc(e.name)}</b> <span class="muted">(${e.str} steps, ${esc(TERRAIN[t.t].label)})</span>
+        ${adj.map((u) => `<label class="check"><input type="checkbox" data-att="${e.id}" value="${u.id}" checked> ${esc(u.name)} (str ${u.str}, cohesion ${u.cohesion}${u.ammo ? '' : ', no ammo!'})</label>`).join('')}
+        <button class="act" data-attack="${e.id}">Assault</button></div>`;
+    }).join('');
+}
+
+function obligationList() {
+  const ob = S.game.obligations || [];
+  if (!ob.length) return '';
+  return `<p class="help"><b>Must attack</b> before the segment ends (enemy zones of control on your units):</p><ul class="orders">${ob.map((o) => {
+    const e = S.game.units.find((u) => u.id === o.enemyId);
+    return `<li>${esc(e?.name || o.hex)} ${o.met ? '<span class="ok">✓</span>' : '<span class="bad">outstanding</span>'}</li>`;
+  }).join('')}</ul>`;
+}
+
+function trucksForm() {
+  draft.transfers ||= [];
+  const dumps = Object.entries(S.game.dumps).filter(([, d]) => d.side === mySide() && !d.spotted);
+  const dests = new Map(dumps.map(([k]) => [k, hexLabel(k)]));
+  for (const u of myUnits()) if (!dests.has(key(...u.pos))) dests.set(key(...u.pos), `${u.name} (${key(...u.pos)})`);
+  const load = draft.transfers.reduce((a, t) => a + t.amount * Math.max(1, Math.ceil(distance(parseKey(t.from), parseKey(t.to)) / 8)), 0);
+  const opt = (m) => [...m].map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('');
+  return `<p>Move supplies with second- and third-line trucks. Capacity used: <b>${load}/${S.game.truckCapacity}</b>.</p>
+  <div class="transfer">
+    <select id="tFrom">${opt(new Map(dumps.map(([k]) => [k, hexLabel(k)])))}</select>
+    <span>→</span>
+    <select id="tTo">${opt(dests)}</select>
+    <select id="tRes"><option>fuel</option><option>water</option><option>ammo</option><option>stores</option></select>
+    <input id="tAmt" type="number" min="1" value="10">
+    <button data-add-transfer>Add</button>
+  </div>
+  <ul class="orders">${draft.transfers.map((t, i) => `<li>${t.amount} ${t.res}: ${esc(hexLabel(t.from))} → ${esc(hexLabel(t.to))} <button class="x" data-del-transfer="${i}">✕</button></li>`).join('') || '<li class="muted">No convoys.</li>'}</ul>`;
+}
+
+function wireOrders(el) {
+  el.querySelectorAll('[data-air]').forEach((i) => (i.onchange = () => { draft[i.dataset.air] = Math.max(0, parseInt(i.value, 10) || 0); renderOrders(); }));
+  el.querySelectorAll('[data-convoy]').forEach((s) => (s.onchange = () => { draft.port = s.value || null; }));
+  el.querySelectorAll('[data-declare]').forEach((b) => (b.onclick = () => send({ type: 'submit', orders: { goFirst: b.dataset.declare === 'first' } })));
+  el.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
+    if (b.dataset.act === 'endPhase' && !confirm('End your Movement & Combat Phase?')) return;
+    selected = null;
+    send({ type: 'action', action: b.dataset.act });
+  }));
+  el.querySelectorAll('[data-attack]').forEach((b) => (b.onclick = () => {
+    const id = b.dataset.attack;
+    const attackerIds = [...el.querySelectorAll(`[data-att="${id}"]:checked`)].map((c) => c.value);
+    if (!attackerIds.length) return toast('Tick at least one attacking unit.');
+    send({ type: 'action', action: 'attack', targetId: id, attackerIds });
+  }));
+  el.querySelector('[data-add-transfer]')?.addEventListener('click', () => {
+    const t = { from: $('tFrom').value, to: $('tTo').value, res: $('tRes').value, amount: parseInt($('tAmt').value, 10) || 0 };
+    if (!t.from || !t.to || t.from === t.to || t.amount <= 0) return toast('Pick two different places and an amount.');
+    draft.transfers.push(t); renderOrders(); drawMap();
+  });
+  el.querySelectorAll('[data-del-transfer]').forEach((b) => (b.onclick = () => { draft.transfers.splice(+b.dataset.delTransfer, 1); renderOrders(); drawMap(); }));
+}
+
+// ---------- Supply / formations ----------
+
+function renderSupply() {
+  const el = $('tab-supply');
+  if (!mySide()) { el.innerHTML = ''; return; }
+  const dumps = Object.entries(S.game.dumps).filter(([, d]) => d.side === mySide() && !d.spotted);
+  const n = (v) => Math.floor(v);
+  el.innerHTML = `<h3>Formations</h3><table class="grid"><tr><th>Unit</th><th>CP</th><th>Coh</th><th>Str</th><th>Fuel</th><th>Water</th><th>Ammo</th></tr>
+    ${myUnits().map((u) => `<tr class="${u.cohesion <= -10 || u.water <= 0 ? 'warn' : ''}"><td>${esc(u.name)}</td><td>${fmtCP(u.cpUsed)}/${u.cpa}</td><td>${u.cohesion}</td><td>${u.str}/${u.maxStr}</td><td>${u.motorised ? u.fuel : '–'}</td><td>${u.water}</td><td>${u.ammo}</td></tr>`).join('')}</table>
+    <h3>Supply dumps</h3><table class="grid"><tr><th>Dump</th><th>Fuel</th><th>Water</th><th>Ammo</th><th>Stores</th></tr>
+    ${dumps.map(([k, d]) => `<tr><td>${esc(hexLabel(k))}</td><td>${n(d.fuel)}</td><td>${n(d.water)}</td><td>${n(d.ammo)}</td><td>${n(d.stores)}</td></tr>`).join('')}</table>
+    <p class="help">CP = capability points used this Operations Stage / allowance. Spending past the allowance costs cohesion. A stage spent resting restores up to 5 cohesion (never above 0). At −26 a unit can't move or fight.</p>
+    <p class="help">Supply is still placeholder: units within 3 hexes of a dump top up at the end of each Game-Turn${S.game.options?.pastaRule ? '; Italian units need extra water for pasta' : ''}.</p>`;
 }
 
 // ---------- Lobby / staff ----------
@@ -152,176 +389,10 @@ for (const b of document.querySelectorAll('#tabs button')) {
   };
 }
 
-// ---------- Helpers on game state ----------
-
-const mySide = () => S.you.side;
-const myUnits = () => (S.game.units || []).filter((u) => u.side === mySide());
-const enemyUnits = () => (S.game.units || []).filter((u) => u.side !== mySide());
-const unitAt = (c, r) => (S.game.units || []).find((u) => u.pos[0] === c && u.pos[1] === r);
-const portName = (k) => PORTS.find((p) => key(p.col, p.row) === k)?.name;
-const hexLabel = (k) => portName(k) || `hex ${k}`;
-const stage = () => S.stages[S.game.stageIndex];
-
-function moveCost(c, r) {
-  const t = TILES[key(c, r)];
-  if (!t) return Infinity;
-  return t.road ? ROAD_COST : TERRAIN[t.t].cost;
-}
-
-// Cheapest paths within the unit's movement allowance (and fuel for vehicles).
-function reachable(u) {
-  const best = new Map([[key(...u.pos), { cost: 0, steps: 0, prev: null }]]);
-  const queue = [u.pos];
-  const enemyAt = new Set(enemyUnits().map((e) => key(...e.pos)));
-  while (queue.length) {
-    queue.sort((a, b) => best.get(key(...a)).cost - best.get(key(...b)).cost);
-    const cur = queue.shift();
-    const cb = best.get(key(...cur));
-    for (const n of neighbours(...cur)) {
-      if (n[0] < 0 || n[1] < 0 || n[0] >= MAP_COLS || n[1] >= MAP_ROWS) continue;
-      const k = key(...n);
-      if (enemyAt.has(k)) continue;
-      const cost = cb.cost + moveCost(...n);
-      const steps = cb.steps + 1;
-      if (cost > u.mp || (u.type !== 'inf' && steps > u.fuel)) continue;
-      if (!best.has(k) || best.get(k).cost > cost) { best.set(k, { cost, steps, prev: key(...cur) }); queue.push(n); }
-    }
-  }
-  return best;
-}
-function pathTo(reach, k) {
-  const path = [];
-  while (reach.get(k)?.prev) { path.unshift(parseKey(k)); k = reach.get(k).prev; }
-  return path;
-}
-
-// ---------- Orders panel ----------
-
-function renderOrders() {
-  const el = $('tab-orders');
-  const st = stage();
-  const g = S.game;
-  if (g.winner) { el.innerHTML = `<h3>Campaign over</h3><p>${SIDE_NAMES[g.winner]} victory.</p>`; return; }
-  if (!mySide()) { el.innerHTML = '<p>You are not on a staff. Take a seat in the <b>Staff</b> tab.</p>'; return; }
-  const ready = g.ready[mySide()];
-  let head = `<h3>${esc(st.name)}</h3>`;
-  if (!S.canAct) head += `<p class="note">${esc(S.actingFor || 'Nobody')} is issuing ${SIDE_NAMES[mySide()]} orders this stage. You can watch the map and advise in staff chat.</p>`;
-  else if (ready) head += '<p class="note ok">Orders are in. Waiting for the other staff.</p>';
-  const body = { air: airForm, convoy: convoyForm, rear: rearForm, move: moveForm, combat: combatForm }[st.id]();
-  el.innerHTML = head + body;
-  const disabled = !S.canAct || ready;
-  for (const input of el.querySelectorAll('input, select, button.edit')) input.disabled = disabled;
-  if (S.canAct) {
-    const btn = document.createElement('button');
-    btn.className = 'primary';
-    btn.textContent = ready ? 'Change orders' : 'Submit orders';
-    btn.onclick = () => (ready ? send({ type: 'unready' }) : send({ type: 'submit', orders: draft }));
-    el.appendChild(btn);
-  }
-  wireOrders(el);
-}
-
-function airForm() {
-  const pts = S.game.airPoints;
-  const v = (k) => draft[k] ?? 0;
-  const used = ['malta', 'escort', 'ground'].reduce((a, k) => a + v(k), 0);
-  return `<p>Allot your ${pts} air points. <b>${used}/${pts}</b> assigned.</p>
-  <label class="row">Malta missions <input type="number" min="0" max="${pts}" data-air="malta" value="${v('malta')}"></label>
-  <label class="row">Convoy escort <input type="number" min="0" max="${pts}" data-air="escort" value="${v('escort')}"></label>
-  <label class="row">Ground support <input type="number" min="0" max="${pts}" data-air="ground" value="${v('ground')}"></label>
-  <p class="help">${mySide() === 'axis' ? 'Raids on Malta and escorts cut convoy losses.' : 'Malta strikes sink Axis convoys; escorts protect your own.'} Ground support is split across this turn's attacks.</p>`;
-}
-
-function convoyForm() {
-  const ports = PORTS.filter((p) => S.game.portOwners[p.id] === mySide());
-  return `<p>Choose where this stage's convoy unloads. Bigger ports land more of it.</p>
-  <select data-convoy><option value="">No convoy</option>${ports.map((p) => `<option value="${p.id}" ${draft.port === p.id ? 'selected' : ''}>${p.name} (capacity ${Math.round(p.capacity * 100)}%)</option>`).join('')}</select>`;
-}
-
-function rearForm() {
-  draft.transfers ||= [];
-  const dumps = Object.entries(S.game.dumps).filter(([, d]) => d.side === mySide() && !d.spotted);
-  const dests = new Map(dumps.map(([k]) => [k, hexLabel(k)]));
-  for (const u of myUnits()) if (!dests.has(key(...u.pos))) dests.set(key(...u.pos), `${u.name} (${key(...u.pos)})`);
-  const load = draft.transfers.reduce((a, t) => a + t.amount * Math.max(1, Math.ceil(distance(parseKey(t.from), parseKey(t.to)) / 8)), 0);
-  const opt = (m) => [...m].map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('');
-  return `<p>Truck capacity used: <b>${load}/${S.game.truckCapacity}</b> (amount × distance in 8-hex legs). Trucks burn fuel at the source dump.</p>
-  <div class="transfer">
-    <select id="tFrom">${opt(new Map(dumps.map(([k]) => [k, hexLabel(k)])))}</select>
-    <span>→</span>
-    <select id="tTo">${opt(dests)}</select>
-    <select id="tRes"><option>fuel</option><option>water</option><option>ammo</option><option>stores</option></select>
-    <input id="tAmt" type="number" min="1" value="10">
-    <button class="edit" data-add-transfer>Add</button>
-  </div>
-  <ul class="orders">${draft.transfers.map((t, i) => `<li>${t.amount} ${t.res}: ${esc(hexLabel(t.from))} → ${esc(hexLabel(t.to))} <button class="edit x" data-del-transfer="${i}">✕</button></li>`).join('') || '<li class="muted">No transfers.</li>'}</ul>`;
-}
-
-function moveForm() {
-  draft.moves ||= [];
-  const sel = myUnits().find((u) => u.id === selected);
-  return `<p>Click one of your units, then click a highlighted hex. Moves are simultaneous; units stop on contact with the enemy.</p>
-  ${sel ? `<p class="note">Selected: <b>${esc(sel.name)}</b> · ${sel.mp} MP${sel.type !== 'inf' ? ` · fuel ${sel.fuel}` : ''}</p>` : ''}
-  <ul class="orders">${draft.moves.map((m, i) => {
-    const u = myUnits().find((x) => x.id === m.unitId);
-    return `<li>${esc(u?.name)} → ${key(...m.path.at(-1))} (${m.path.length} hexes) <button class="edit x" data-del-move="${i}">✕</button></li>`;
-  }).join('') || '<li class="muted">No moves planned.</li>'}</ul>`;
-}
-
-function combatForm() {
-  draft.attacks ||= [];
-  const targets = enemyUnits().filter((e) => myUnits().some((u) => distance(u.pos, e.pos) === 1));
-  if (!targets.length) return '<p>No enemy units are in contact. Submit to carry on.</p>' + attackList();
-  return `<p>Pick a target and the adjacent units that will attack it. Each attacker spends ammunition.</p>
-  ${targets.map((e) => {
-    const adj = myUnits().filter((u) => distance(u.pos, e.pos) === 1);
-    return `<div class="attack"><b>${esc(e.name)}</b> <span class="muted">(${e.str} steps, ${esc(TERRAIN[TILES[key(...e.pos)].t].label)})</span>
-      ${adj.map((u) => `<label class="check"><input type="checkbox" data-att="${e.id}" value="${u.id}"> ${esc(u.name)} (${u.str}${u.ammo ? '' : ', no ammo!'})</label>`).join('')}
-      <button class="edit" data-add-attack="${e.id}">Order attack</button></div>`;
-  }).join('')}${attackList()}`;
-}
-const attackList = () => `<ul class="orders">${(draft.attacks || []).map((a, i) => {
-  const t = enemyUnits().find((e) => e.id === a.targetId);
-  return `<li>${a.attackerIds.length} unit(s) → ${esc(t?.name)} <button class="edit x" data-del-attack="${i}">✕</button></li>`;
-}).join('')}</ul>`;
-
-function wireOrders(el) {
-  el.querySelectorAll('[data-air]').forEach((i) => (i.onchange = () => { draft[i.dataset.air] = Math.max(0, parseInt(i.value, 10) || 0); renderOrders(); }));
-  el.querySelectorAll('[data-convoy]').forEach((s) => (s.onchange = () => { draft.port = s.value || null; }));
-  el.querySelector('[data-add-transfer]')?.addEventListener('click', () => {
-    const t = { from: $('tFrom').value, to: $('tTo').value, res: $('tRes').value, amount: parseInt($('tAmt').value, 10) || 0 };
-    if (!t.from || !t.to || t.from === t.to || t.amount <= 0) return toast('Pick two different places and an amount.');
-    draft.transfers.push(t); renderOrders(); drawMap();
-  });
-  el.querySelectorAll('[data-del-transfer]').forEach((b) => (b.onclick = () => { draft.transfers.splice(+b.dataset.delTransfer, 1); renderOrders(); drawMap(); }));
-  el.querySelectorAll('[data-del-move]').forEach((b) => (b.onclick = () => { draft.moves.splice(+b.dataset.delMove, 1); renderOrders(); drawMap(); }));
-  el.querySelectorAll('[data-add-attack]').forEach((b) => (b.onclick = () => {
-    const id = b.dataset.addAttack;
-    const attackerIds = [...el.querySelectorAll(`[data-att="${id}"]:checked`)].map((c) => c.value);
-    if (!attackerIds.length) return toast('Tick at least one attacking unit.');
-    draft.attacks = draft.attacks.filter((a) => a.targetId !== id);
-    draft.attacks.push({ targetId: id, attackerIds });
-    renderOrders(); drawMap();
-  }));
-  el.querySelectorAll('[data-del-attack]').forEach((b) => (b.onclick = () => { draft.attacks.splice(+b.dataset.delAttack, 1); renderOrders(); drawMap(); }));
-}
-
-// ---------- Supply / log / chat ----------
-
-function renderSupply() {
-  const el = $('tab-supply');
-  if (!mySide()) { el.innerHTML = ''; return; }
-  const dumps = Object.entries(S.game.dumps).filter(([, d]) => d.side === mySide() && !d.spotted);
-  const n = (v) => Math.floor(v);
-  el.innerHTML = `<h3>Supply dumps</h3><table class="grid"><tr><th>Dump</th><th>Fuel</th><th>Water</th><th>Ammo</th><th>Stores</th></tr>
-    ${dumps.map(([k, d]) => `<tr><td>${esc(hexLabel(k))}</td><td>${n(d.fuel)}</td><td>${n(d.water)}</td><td>${n(d.ammo)}</td><td>${n(d.stores)}</td></tr>`).join('')}</table>
-    <h3>Formations</h3><table class="grid"><tr><th>Unit</th><th>Str</th><th>Fuel</th><th>Water</th><th>Ammo</th></tr>
-    ${myUnits().map((u) => `<tr class="${u.water <= 0 ? 'warn' : ''}"><td>${esc(u.name)}</td><td>${u.str}/${u.maxStr}</td><td>${u.type === 'inf' ? '–' : u.fuel}</td><td>${u.water}</td><td>${u.ammo}</td></tr>`).join('')}</table>
-    <p class="help">Units within 3 hexes of a friendly dump draw supplies at the end of each turn. Every unit drinks water each turn${S.game.options?.pastaRule ? ' (Italian units need extra for pasta)' : ''}; dumps lose fuel to leaking cans.</p>`;
-}
+// ---------- Log / chat ----------
 
 function renderLog() {
-  $('tab-log').innerHTML = (S.game.log || []).slice().reverse().map((l) => `<p class="logline ${l.side}"><span class="muted">T${l.turn}</span> ${esc(l.text)}</p>`).join('') || '<p class="muted">Nothing yet.</p>';
+  $('tab-log').innerHTML = (S.game.log || []).slice().reverse().map((l) => `<p class="logline ${l.side}"><span class="muted">GT${l.turn}${l.stage ? '.' + l.stage : ''}</span> ${esc(l.text)}</p>`).join('') || '<p class="muted">Nothing yet.</p>';
 }
 
 function renderChat() {
@@ -341,7 +412,7 @@ $('chatForm').addEventListener('submit', (e) => {
 const canvas = $('map');
 const ctx = canvas.getContext('2d');
 const view = { size: 22, ox: 30, oy: 30 };
-const COLORS = { sea: '#7d9bab', coast: '#dcc791', desert: '#e6d3a3', rough: '#c3aa78', escarpment: '#9b8457', depression: '#cdb98d' };
+const COLORS = { sea: '#7d9bab', clear: '#ead9ad', gravel: '#dcc795', saltmarsh: '#cfc3a6', heavyveg: '#a9b57f', rough: '#c3aa78', mountain: '#a48b62', delta: '#b8c38a', desert: '#f0dc9c', majorcity: '#cbb8a0', swamp: '#9fb39a' };
 const SIDE_COLORS = { axis: { fill: '#9a9f86', edge: '#3e4434' }, cw: { fill: '#d2ad6e', edge: '#5b3d16' } };
 const NATION_COLORS = { it: '#a6ad7f', de: '#8f959b', uk: '#d2ad6e', in: '#c99d5f', au: '#d8b77a', nz: '#c7a76f' };
 
@@ -366,6 +437,17 @@ function hexPath(cx, cy, s) {
 }
 const centre = (c, r) => { const p = hexToPixel(c, r, view.size); return { x: p.x + view.ox, y: p.y + view.oy }; };
 
+// Endpoints of the shared side between two adjacent hexes.
+function sharedEdge(a, b) {
+  const A = centre(...a), B = centre(...b);
+  const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+  const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy);
+  const half = view.size / 2;
+  return [{ x: mx - (dy / len) * half, y: my + (dx / len) * half }, { x: mx + (dy / len) * half, y: my - (dx / len) * half }, { dx: dx / len, dy: dy / len }];
+}
+
+let reachCache = null;
+
 function drawMap() {
   if (!S?.game) return;
   const s = view.size;
@@ -374,36 +456,76 @@ function drawMap() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   const own = myUnits();
   const visible = (c, r) => !mySide() || own.some((u) => distance(u.pos, [c, r]) <= VISION_RANGE);
-  const reach = selected && stage().id === 'move' ? reachable(own.find((u) => u.id === selected)) : null;
+  const sel = own.find((u) => u.id === selected);
+  reachCache = sel && myPhase() && S.game.seg?.mode === 'move' && S.canAct ? reachable(sel) : null;
 
   for (let c = 0; c < MAP_COLS; c++) {
     for (let r = 0; r < MAP_ROWS; r++) {
       const t = TILES[key(c, r)];
       const { x, y } = centre(c, r);
       hexPath(x, y, s);
-      ctx.fillStyle = COLORS[t.t];
+      ctx.fillStyle = COLORS[t.t] || '#e0d0a0';
       ctx.fill();
-      if (t.t === 'depression') { ctx.strokeStyle = '#a8946a'; ctx.lineWidth = 1; for (let i = -s; i < s; i += 5) { ctx.beginPath(); ctx.moveTo(x + i, y - s * 0.6); ctx.lineTo(x + i + 6, y + s * 0.6); ctx.stroke(); } }
-      if (t.t === 'escarpment') { ctx.strokeStyle = '#6b5636'; ctx.lineWidth = 2; ctx.beginPath(); for (let i = -0.7; i <= 0.7; i += 0.35) { ctx.moveTo(x + i * s, y + 2); ctx.lineTo(x + i * s + 3, y + 7); } ctx.stroke(); }
-      if (t.t !== 'sea' && !visible(c, r)) { hexPath(x, y, s); ctx.fillStyle = 'rgba(40,30,15,0.18)'; ctx.fill(); }
-      if (reach?.has(key(c, r)) && key(c, r) !== key(...own.find((u) => u.id === selected).pos)) { hexPath(x, y, s); ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fill(); }
+      if (t.t === 'saltmarsh') { ctx.strokeStyle = '#a8946a'; ctx.lineWidth = 1; for (let i = -s; i < s; i += 5) { ctx.beginPath(); ctx.moveTo(x + i, y - s * 0.6); ctx.lineTo(x + i + 6, y + s * 0.6); ctx.stroke(); } }
+      if (t.t === 'mountain') { ctx.fillStyle = '#7d6748'; ctx.beginPath(); ctx.moveTo(x - s * 0.4, y + s * 0.3); ctx.lineTo(x, y - s * 0.35); ctx.lineTo(x + s * 0.4, y + s * 0.3); ctx.fill(); }
+      if (t.t !== 'sea' && !visible(c, r)) { hexPath(x, y, s); ctx.fillStyle = 'rgba(40,30,15,0.16)'; ctx.fill(); }
       hexPath(x, y, s);
-      ctx.strokeStyle = 'rgba(80,60,30,0.25)';
+      ctx.strokeStyle = 'rgba(80,60,30,0.22)';
       ctx.lineWidth = 1;
       ctx.stroke();
     }
   }
-  // Coast road
-  ctx.strokeStyle = '#6d4f2b'; ctx.lineWidth = 2.5; ctx.setLineDash([6, 4]); ctx.beginPath();
-  let first = true;
-  for (let c = 0; c < MAP_COLS; c++) for (let r = 0; r < MAP_ROWS; r++) if (TILES[key(c, r)].road) { const p = centre(c, r); ctx[first ? 'moveTo' : 'lineTo'](p.x, p.y); first = false; }
-  ctx.stroke(); ctx.setLineDash([]);
+  // Reachable hexes with CP cost
+  if (reachCache) {
+    for (const [k, v] of reachCache) {
+      if (k === key(...sel.pos)) continue;
+      const [c, r] = parseKey(k);
+      const { x, y } = centre(c, r);
+      hexPath(x, y, s);
+      const over = sel.cpUsed + v.cost > sel.cpa;
+      ctx.fillStyle = v.stop ? 'rgba(200,60,40,0.30)' : over ? 'rgba(230,160,40,0.35)' : 'rgba(255,255,255,0.45)';
+      ctx.fill();
+      if (s >= 16) { ctx.fillStyle = '#222'; ctx.font = `${Math.max(8, s * 0.38)}px "Courier New", monospace`; ctx.textAlign = 'center'; ctx.fillText(fmtCP(v.cost), x, y + s * 0.55); }
+    }
+  }
+  // Hexsides
+  for (const [ek, h] of Object.entries(MAP.hexsides)) {
+    const [a, b] = ek.split('|').map(parseKey);
+    const [p1, p2, n] = sharedEdge(a, b);
+    if (h.type === 'escarpment') {
+      // Ticks point towards the down side.
+      const down = parseKey(h.down);
+      const D = centre(...down), M = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+      const dir = Math.sign((D.x - M.x) * n.dx + (D.y - M.y) * n.dy) || 1;
+      ctx.strokeStyle = '#5a4122'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+      ctx.lineWidth = 1.5; ctx.beginPath();
+      for (let t = 0.15; t < 1; t += 0.23) {
+        const x = p1.x + (p2.x - p1.x) * t, y = p1.y + (p2.y - p1.y) * t;
+        ctx.moveTo(x, y); ctx.lineTo(x + n.dx * dir * s * 0.22, y + n.dy * dir * s * 0.22);
+      }
+      ctx.stroke();
+    } else if (h.type === 'wadi') {
+      ctx.strokeStyle = '#4e7a96'; ctx.lineWidth = 2; ctx.setLineDash([3, 2]); ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+  // Roads and tracks
+  const drawEdges = (set, style, width, dash) => {
+    ctx.strokeStyle = style; ctx.lineWidth = width; ctx.setLineDash(dash); ctx.beginPath();
+    for (const ek of set) {
+      const [a, b] = ek.split('|').map(parseKey);
+      const A = centre(...a), B = centre(...b);
+      ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  drawEdges(MAP.roads, '#7a1f12', 2.5, []);
+  drawEdges(MAP.tracks, '#5d4a2c', 1.5, [4, 3]);
 
   // Ports
   for (const p of PORTS) {
     const { x, y } = centre(p.col, p.row);
     const owner = S.game.portOwners[p.id];
-    ctx.beginPath(); ctx.arc(x, y, s * 0.32, 0, Math.PI * 2);
+    ctx.beginPath(); ctx.arc(x, y, s * 0.28, 0, Math.PI * 2);
     ctx.fillStyle = SIDE_COLORS[owner].fill; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = SIDE_COLORS[owner].edge; ctx.stroke();
     ctx.font = `bold ${Math.max(9, s * 0.5)}px Georgia, serif`; ctx.textAlign = 'center'; ctx.fillStyle = '#1e2a33';
@@ -415,48 +537,49 @@ function drawMap() {
     ctx.fillStyle = d.side === mySide() ? '#2f5d3a' : '#8c2b1e';
     ctx.fillRect(x + s * 0.3, y - s * 0.75, s * 0.32, s * 0.32);
   }
-  // Planned moves & transfers
-  if (stage().id === 'move') for (const m of draft.moves || []) {
-    const u = own.find((x) => x.id === m.unitId); if (!u) continue;
-    ctx.strokeStyle = '#1c3d8c'; ctx.lineWidth = 3; ctx.beginPath();
-    const p0 = centre(...u.pos); ctx.moveTo(p0.x, p0.y);
-    for (const st of m.path) { const p = centre(...st); ctx.lineTo(p.x, p.y); }
-    ctx.stroke();
-  }
-  if (stage().id === 'rear') for (const t of draft.transfers || []) {
+  // Planned truck convoys
+  if (S.game.step === 'trucks') for (const t of draft.transfers || []) {
     const a = centre(...parseKey(t.from)), b = centre(...parseKey(t.to));
     ctx.strokeStyle = '#2f5d3a'; ctx.setLineDash([3, 3]); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.setLineDash([]);
   }
-  if (stage().id === 'combat') for (const a of draft.attacks || []) {
-    const t = S.game.units.find((u) => u.id === a.targetId); if (!t) continue;
-    const b = centre(...t.pos);
-    for (const id of a.attackerIds) { const u = own.find((x) => x.id === id); if (!u) continue; const p = centre(...u.pos); ctx.strokeStyle = '#a3241a'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
-  }
-  // Units
-  for (const u of S.game.units) drawCounter(u);
+  // Units (stacks fan out slightly)
+  const stacks = new Map();
+  for (const u of S.game.units) { const k = key(...u.pos); if (!stacks.has(k)) stacks.set(k, []); stacks.get(k).push(u); }
+  for (const list of stacks.values()) list.forEach((u, i) => drawCounter(u, i, list.length));
 }
 
-function drawCounter(u) {
+function drawCounter(u, i, n) {
   const s = view.size;
-  const { x, y } = centre(...u.pos);
+  const c0 = centre(...u.pos);
+  const x = c0.x + (i - (n - 1) / 2) * s * 0.28, y = c0.y + (i - (n - 1) / 2) * s * 0.18;
   const w = s * 1.15, h = s * 1.0;
+  const frozen = myPhase() && S.game.seg?.frozen?.includes(u.id);
+  ctx.globalAlpha = frozen ? 0.6 : 1;
   ctx.fillStyle = NATION_COLORS[u.nation] || SIDE_COLORS[u.side].fill;
   ctx.fillRect(x - w / 2, y - h / 2, w, h);
   ctx.lineWidth = u.id === selected ? 3 : 1.5;
   ctx.strokeStyle = u.id === selected ? '#1c3d8c' : u.side !== mySide() ? '#a3241a' : SIDE_COLORS[u.side].edge;
   ctx.strokeRect(x - w / 2, y - h / 2, w, h);
-  // NATO-style symbol box
+  // NATO-style symbol
   const bw = w * 0.6, bh = h * 0.42, bx = x - bw / 2, by = y - h * 0.38;
   ctx.strokeStyle = '#222'; ctx.lineWidth = 1.2; ctx.strokeRect(bx, by, bw, bh);
   ctx.beginPath();
   if (u.type === 'inf' || u.type === 'mot') { ctx.moveTo(bx, by); ctx.lineTo(bx + bw, by + bh); ctx.moveTo(bx + bw, by); ctx.lineTo(bx, by + bh); }
   if (u.type === 'arm' || u.type === 'mot') { ctx.ellipse(x, by + bh / 2, bw * 0.32, bh * 0.3, 0, 0, Math.PI * 2); }
+  if (u.type === 'hq') { ctx.moveTo(bx, by + bh); ctx.lineTo(bx, by + bh * 1.8); }
   ctx.stroke();
-  ctx.fillStyle = '#111'; ctx.font = `bold ${Math.max(8, s * 0.42)}px "Courier New", monospace`; ctx.textAlign = 'center';
+  // Size marks above the box: XX division, X brigade, II battalion
+  const mark = { division: 'XX', brigade: 'X', battalion: 'II' }[u.size] || '';
+  ctx.fillStyle = '#111'; ctx.font = `bold ${Math.max(6, s * 0.28)}px sans-serif`; ctx.textAlign = 'center';
+  ctx.fillText(mark, x, by - 1);
+  ctx.font = `bold ${Math.max(8, s * 0.4)}px "Courier New", monospace`;
   ctx.fillText(String(u.str), x, y + h * 0.42);
+  // Cohesion warning pip
+  if (u.side === mySide() && u.cohesion < 0) { ctx.fillStyle = u.cohesion <= -10 ? '#a3241a' : '#c98a1e'; ctx.fillRect(x + w / 2 - s * 0.22, y - h / 2, s * 0.22, s * 0.22); }
+  ctx.globalAlpha = 1;
 }
 
-// Map interaction: pan, zoom, select, order.
+// Map interaction: pan, zoom, select, move.
 let drag = null;
 canvas.addEventListener('mousedown', (e) => { drag = { x: e.clientX, y: e.clientY, ox: view.ox, oy: view.oy, moved: false }; });
 addEventListener('mousemove', (e) => {
@@ -493,30 +616,38 @@ function eventHex(e) {
 function showHexInfo([c, r]) {
   const t = TILES[key(c, r)];
   if (!t) { $('hexInfo').textContent = ''; return; }
-  const u = unitAt(c, r);
+  const us = unitsAt(c, r);
   const d = S.game.dumps[key(c, r)];
   const port = PORTS.find((p) => p.col === c && p.row === r);
+  const reach = reachCache?.get(key(c, r));
+  const terr = TERRAIN[t.t];
   $('hexInfo').innerHTML = [
-    `<b>${key(c, r)}</b> ${esc(TERRAIN[t.t].label)}${t.road ? ' · road' : ''}`,
-    port ? `${esc(port.name)} (${SIDE_NAMES[S.game.portOwners[port.id]]})` : '',
-    u ? `${esc(u.name)} · ${u.str} steps${u.side === mySide() ? ` · F${u.fuel} W${u.water} A${u.ammo}` : ''}` : '',
+    `<b>${key(c, r)}</b> ${esc(terr.label)} <span class="muted">(CP ${terr.np === Infinity ? 'P' : terr.np}/${terr.mp === Infinity ? 'P' : terr.mp}, stack ${terr.stack})</span>`,
+    port ? `${esc(port.name)} (${sideName(S.game.portOwners[port.id])})` : '',
+    ...us.map((u) => `${esc(u.name)} · ${u.str} steps${u.side === mySide() ? ` · CP ${fmtCP(u.cpUsed)}/${u.cpa} · coh ${u.cohesion}` : ''}`),
     d && !d.spotted && d.side === mySide() ? `Dump: fuel ${Math.floor(d.fuel)}, water ${Math.floor(d.water)}, ammo ${Math.floor(d.ammo)}` : d ? 'Enemy dump' : '',
+    reach ? `Move here: ${fmtCP(reach.cost)} CP${reach.stop ? ' · enters enemy ZOC (must stop)' : ''}` : '',
   ].filter(Boolean).join('<br>');
 }
 
 function clickHex([c, r]) {
-  if (!S?.game || S.game.winner || !mySide()) return;
-  const u = unitAt(c, r);
-  const st = stage().id;
-  if (u && u.side === mySide()) { selected = u.id === selected ? null : u.id; renderOrders(); drawMap(); return; }
-  if (st === 'move' && selected && S.canAct && !S.game.ready[mySide()]) {
-    const unit = myUnits().find((x) => x.id === selected);
-    const reach = reachable(unit);
-    const k = key(c, r);
-    if (!reach.has(k) || k === key(...unit.pos)) return toast('Out of reach this stage.');
-    draft.moves = (draft.moves || []).filter((m) => m.unitId !== unit.id);
-    draft.moves.push({ unitId: unit.id, path: pathTo(reach, k) });
-    selected = null;
-    renderOrders(); drawMap();
+  if (!S?.game || S.game.over || !mySide()) return;
+  const mine = unitsAt(c, r).filter((u) => u.side === mySide());
+  const k = key(c, r);
+  // Moving the selected unit takes priority if the hex is reachable.
+  if (selected && reachCache?.has(k) && k !== key(...myUnits().find((u) => u.id === selected).pos)) {
+    const path = pathTo(reachCache, k);
+    send({ type: 'action', action: 'move', unitId: selected, path });
+    return;
   }
+  if (mine.length) {
+    // Repeated clicks cycle through a stack.
+    const idx = mine.findIndex((u) => u.id === selected);
+    selected = mine[(idx + 1) % mine.length].id;
+    if (idx === mine.length - 1) selected = null;
+    renderOrders(); drawMap(); showHexInfo([c, r]);
+    return;
+  }
+  selected = null;
+  renderOrders(); drawMap();
 }

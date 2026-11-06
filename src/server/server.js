@@ -7,8 +7,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { SIDES, ROLES, STAGES } from '../shared/scenario.js';
-import { createGame, submitOrders, unready, bothReady, resolveStage, viewFor, currentStage } from './engine.js';
+import { SIDES, ROLES } from '../shared/scenario.js';
+import { createGame, submitOrders, unready, act, viewFor, currentStep, actingSides, STEPS } from './engine.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(here, '..');
@@ -26,6 +26,11 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
     try {
       room = { ...room, ...JSON.parse(fs.readFileSync(savePath, 'utf8')) };
       for (const p of room.players) p.connected = false;
+      if (room.game && room.game.version !== 2) {
+        console.error('Save is from an older rules version; returning to the lobby with seats kept.');
+        room.game = null;
+        room.phase = 'lobby';
+      }
     } catch (e) {
       console.error('Could not read save, starting fresh:', e.message);
     }
@@ -65,14 +70,17 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
     return onSide.find((p) => p.role === role) || onSide.find((p) => p.role === 'cic') || onSide[0] || null;
   }
 
-  function autoReadyEmptySides() {
+  // Sides with nobody seated pass automatically so a game can be tested solo.
+  function autoActEmptySides() {
     if (room.phase !== 'game' || !room.game) return;
-    for (const s of SIDES) {
-      if (!room.players.some((p) => p.side === s) && !room.game.ready[s]) submitOrders(room.game, s, {});
-    }
-    while (bothReady(room.game) && !room.game.winner) {
-      resolveStage(room.game);
-      for (const s of SIDES) if (!room.players.some((p) => p.side === s)) submitOrders(room.game, s, {});
+    for (let guard = 0; guard < 500 && !room.game.over; guard++) {
+      const empty = actingSides(room.game).filter((s) => !room.players.some((p) => p.side === s));
+      if (!empty.length) return;
+      const s = empty[0];
+      const step = room.game.step;
+      if (step === 'movecombat') act(room.game, s, { action: 'endPhase' });
+      else if (step === 'declare') submitOrders(room.game, s, { goFirst: true });
+      else submitOrders(room.game, s, {});
     }
   }
 
@@ -80,22 +88,23 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
     for (const [ws, pid] of sockets) {
       const me = room.players.find((p) => p.id === pid);
       if (!me || ws.readyState !== 1) continue;
-      const stage = room.game ? currentStage(room.game) : null;
+      const step = room.game ? currentStep(room.game) : null;
       const msg = {
         type: 'state',
         you: { id: me.id, name: me.name, side: me.side, role: me.role, isHost: !!me.isHost },
         phase: room.phase,
         players: room.players.map(({ token, ...p }) => p),
         chat: room.chat.filter((c) => c.channel === 'all' || c.channel === me.side).slice(-60),
-        stages: STAGES,
+        steps: STEPS,
       };
       if (room.game && me.side) {
         msg.game = viewFor(room.game, me.side);
-        const auth = authority(me.side, stage.role);
-        msg.canAct = auth?.id === me.id;
+        const auth = authority(me.side, step.role);
+        msg.canAct = !room.game.over && actingSides(room.game).includes(me.side) && auth?.id === me.id;
         msg.actingFor = auth ? auth.name : null;
       } else if (room.game) {
-        msg.game = { turn: room.game.turn, stageIndex: room.game.stageIndex, ready: room.game.ready, winner: room.game.winner, units: [], dumps: {}, portOwners: room.game.portOwners, log: room.game.log.filter((l) => l.side === 'all').slice(-40) };
+        const v = viewFor(room.game, 'axis');
+        msg.game = { ...v, units: [], dumps: {}, seg: null, obligations: [], myOrders: null, air: null, log: room.game.log.filter((l) => l.side === 'all').slice(-60) };
       }
       ws.send(JSON.stringify(msg));
     }
@@ -149,22 +158,37 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
           break;
         case 'submit': {
           if (room.phase !== 'game' || !me.side) return;
-          const stage = currentStage(room.game);
-          if (authority(me.side, stage.role)?.id !== me.id) return reply(ws, 'error', `It is the ${stage.role} seat's call this stage.`);
+          const step = currentStep(room.game);
+          if (authority(me.side, step.role)?.id !== me.id) return reply(ws, 'error', `This step is for the ${step.role} seat.`);
           const err = submitOrders(room.game, me.side, m.orders);
+          if (err) return reply(ws, 'error', err);
+          break;
+        }
+        case 'action': {
+          if (room.phase !== 'game' || !me.side) return;
+          const step = currentStep(room.game);
+          if (authority(me.side, step.role)?.id !== me.id) return reply(ws, 'error', `This step is for the ${step.role} seat.`);
+          const err = act(room.game, me.side, m);
           if (err) return reply(ws, 'error', err);
           break;
         }
         case 'unready': {
           if (room.phase !== 'game' || !me.side) return;
-          const stage = currentStage(room.game);
-          if (authority(me.side, stage.role)?.id !== me.id) return;
+          const step = currentStep(room.game);
+          if (authority(me.side, step.role)?.id !== me.id) return;
           unready(room.game, me.side);
           break;
         }
         case 'force': {
+          // Host override: pass the current step for whichever side is holding things up.
           if (!isHost(ws) || room.phase !== 'game') return;
-          for (const s of SIDES) if (!room.game.ready[s]) submitOrders(room.game, s, {});
+          for (const s of actingSides(room.game)) {
+            if (room.game.step === 'movecombat') {
+              room.game.seg.mode = 'move'; // skip outstanding attack obligations
+              act(room.game, s, { action: 'endPhase' });
+            } else if (room.game.step === 'declare') submitOrders(room.game, s, { goFirst: true });
+            else submitOrders(room.game, s, {});
+          }
           break;
         }
         case 'chat': {
@@ -184,10 +208,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
         default:
           return;
       }
-      if (room.phase === 'game') {
-        if (bothReady(room.game)) resolveStage(room.game);
-        autoReadyEmptySides();
-      }
+      if (room.phase === 'game') autoActEmptySides();
       save();
       broadcast();
     });

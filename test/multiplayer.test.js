@@ -6,7 +6,6 @@ import path from 'node:path';
 import fs from 'node:fs';
 import WebSocket from 'ws';
 import { startServer } from '../src/server/server.js';
-import { STAGES } from '../src/shared/scenario.js';
 
 function client(url, name, hostToken) {
   const ws = new WebSocket(url.replace('http', 'ws') + '/ws');
@@ -52,7 +51,8 @@ test('lobby, seats, fog of war and a full turn of stages', async () => {
   assert.ok(!cwView.some((u) => u.id === 'it-pav'), 'Pavia in Tripoli should be hidden from the Commonwealth');
   assert.ok(cwView.filter((u) => u.side === 'axis').every((u) => u.fuel === undefined));
 
-  // Air stage: the Air seat is empty on both sides, so the C-in-Cs act; Ben (front) cannot.
+  // Air step: the Air seat is empty on both sides, so the C-in-Cs act; Ben (front) cannot.
+  assert.equal(host.state.game.step, 'air');
   assert.equal(host.state.canAct, true);
   assert.equal(ally.state.canAct, false);
   host.send({ type: 'submit', orders: { malta: 9 } });
@@ -61,43 +61,47 @@ test('lobby, seats, fog of war and a full turn of stages', async () => {
   host.send({ type: 'submit', orders: { malta: 3, escort: 1, ground: 1 } });
   axisC.send({ type: 'submit', orders: { malta: 2, escort: 4 } });
   await settle();
-  assert.equal(host.state.game.stageIndex, 1);
+  assert.equal(host.state.game.step, 'convoy');
 
-  // Convoy
   host.send({ type: 'submit', orders: { port: 'alexandria' } });
   axisC.send({ type: 'submit', orders: { port: 'benghazi' } });
   await settle();
   assert.ok(axisC.state.game.log.some((l) => /Convoy to Benghazi/.test(l.text)));
 
-  // Rear area: truck water from Mersa Matruh dump to 4th Indian Div's hex.
-  const matruh = Object.keys(host.state.game.dumps).find((k) => host.state.game.dumps[k].side === 'cw' && k !== '62,3');
-  const ind = host.state.game.units.find((u) => u.id === 'cw-4ind');
-  host.send({ type: 'submit', orders: { transfers: [{ from: matruh, to: ind.pos.join(','), res: 'water', amount: 10 }] } });
-  axisC.send({ type: 'submit', orders: {} });
+  // Initiative declaration: the Axis holds the initiative on Game-Turn 1, so only Dave can act.
+  assert.equal(axisC.state.game.step, 'declare');
+  assert.equal(axisC.state.canAct, true);
+  assert.equal(host.state.canAct, false);
+  axisC.send({ type: 'submit', orders: { goFirst: false } });
   await settle();
-  assert.equal(host.state.game.stageIndex, 3);
-  assert.ok(host.state.game.dumps[ind.pos.join(',')].water >= 10);
+  assert.deepEqual(host.state.game.order, { A: 'cw', B: 'axis' });
 
-  // Movement: Ben now holds the Front seat, so he acts (and the C-in-C does not).
+  // Commonwealth is Player A: Ben (front seat) moves the 7th Armoured one hex west.
+  assert.equal(ally.state.game.step, 'movecombat');
   assert.equal(ally.state.canAct, true);
   assert.equal(host.state.canAct, false);
   const arm = ally.state.game.units.find((u) => u.id === 'cw-7arm');
-  ally.send({ type: 'submit', orders: { moves: [{ unitId: arm.id, path: [[arm.pos[0] - 1, arm.pos[1]]] }] } });
-  axisC.send({ type: 'submit', orders: {} });
+  ally.send({ type: 'action', action: 'move', unitId: arm.id, path: [[arm.pos[0] - 1, arm.pos[1]]] });
   await settle();
   const armAfter = ally.state.game.units.find((u) => u.id === 'cw-7arm');
   assert.deepEqual(armAfter.pos, [arm.pos[0] - 1, arm.pos[1]]);
-  assert.equal(armAfter.fuel, arm.fuel - 1);
+  assert.ok(armAfter.cpUsed > 0);
+  ally.send({ type: 'action', action: 'endPhase' });
+  await settle();
 
-  // Combat (nothing ordered) -> end of turn.
-  ally.send({ type: 'submit', orders: {} });
-  axisC.send({ type: 'force' }); // not host: ignored
+  // Truck convoy phase belongs to the Rear Area seat; empty, so the C-in-C (host) acts.
+  assert.equal(host.state.game.step, 'trucks');
+  const matruh = Object.keys(host.state.game.dumps).find((k) => host.state.game.dumps[k].side === 'cw' && k !== '62,3');
+  const ind = host.state.game.units.find((u) => u.id === 'cw-4ind');
+  host.send({ type: 'submit', orders: { transfers: [{ from: matruh, to: ind.pos.join(','), res: 'water', amount: 10 }] } });
   await settle();
-  assert.equal(host.state.game.turn, 1);
-  host.send({ type: 'force' });
-  await settle();
+  assert.ok(host.state.game.dumps[ind.pos.join(',')].water >= 10);
+  assert.equal(host.state.game.half, 'B');
+
+  // Host can force the rest of the turn along.
+  for (let i = 0; i < 40 && host.state.game.turn === 1; i++) { host.send({ type: 'force' }); await settle(); }
   assert.equal(host.state.game.turn, 2);
-  assert.equal(host.state.game.stageIndex, 0);
+  assert.equal(host.state.game.step, 'air');
 
   // Team chat stays on the team.
   host.send({ type: 'chat', channel: 'team', text: 'Hold the escarpment' });
@@ -111,7 +115,6 @@ test('lobby, seats, fog of war and a full turn of stages', async () => {
   await srv.close();
   const saved = JSON.parse(fs.readFileSync(savePath, 'utf8'));
   assert.equal(saved.game.turn, 2);
-  assert.equal(STAGES.length, 5);
 });
 
 test('static client files are served', async () => {
