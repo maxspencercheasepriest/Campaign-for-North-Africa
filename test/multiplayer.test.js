@@ -11,10 +11,12 @@ import { stepCost } from '../src/shared/rules.js';
 import { neighbours, key } from '../src/shared/hex.js';
 import { hexFromName } from '../src/shared/hexnames.js';
 
+let lastMessage = Date.now();
 function client(url, name, hostToken) {
   const ws = new WebSocket(url.replace('http', 'ws') + '/ws');
   const c = { ws, state: null, errors: [], waiters: [] };
   ws.on('message', (raw) => {
+    lastMessage = Date.now();
     const m = JSON.parse(raw);
     if (m.type === 'state') { c.state = m; c.waiters.splice(0).forEach((f) => f()); }
     if (m.type === 'error') c.errors.push(m.text);
@@ -24,7 +26,12 @@ function client(url, name, hostToken) {
   c.ready = new Promise((r) => ws.on('open', () => { c.send({ type: 'hello', name, hostToken }); r(); }));
   return c;
 }
-const settle = () => new Promise((r) => setTimeout(r, 150));
+// Wait until the server has been quiet for 150ms (robust on a busy machine), at most 5s.
+const settle = async () => {
+  const start = Date.now();
+  await new Promise((r) => setTimeout(r, 150));
+  while (Date.now() - lastMessage < 150 && Date.now() - start < 5000) await new Promise((r) => setTimeout(r, 50));
+};
 
 test('lobby, seats, fog of war and a full turn of stages', async () => {
   const savePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-')), 'save.json');
@@ -46,7 +53,7 @@ test('lobby, seats, fog of war and a full turn of stages', async () => {
   axisC.send({ type: 'start' }); // not host
   await settle();
   assert.match(axisC.errors.at(-1), /Only the host/);
-  host.send({ type: 'start' });
+  host.send({ type: 'start', options: { seed: 1 } });
   await settle();
   assert.equal(host.state.phase, 'game', JSON.stringify(host.errors));
 

@@ -5,6 +5,7 @@
 
 import { key, neighbours, distance, parseKey } from '../shared/hex.js';
 import { stepCost, sectionOfRow } from '../shared/rules.js';
+import { nameOfHex } from '../shared/hexnames.js';
 import { WEAPONS } from '../shared/weapons.js';
 import {
   AXIS_SUPPLY_TABLE, CW_SUPPLY_TABLE, AXIS_CONVOY_LEVEL, CONVOY_BOMB_ROWS, convoyBombColumn, CONVOY_LOSS,
@@ -140,9 +141,10 @@ export function cwSupplyPeriod(gt) {
 // Plan this Game-Turn's future arrivals. Axis plans two turns ahead, Commonwealth four [32.43].
 export function planArrivals(sup, roll, gt, { firstTurn }) {
   const add = (side, arrive, n) => { if (n > 0) sup.plan.push({ side, turn: arrive, n }); };
+  // On the first turn the turns before the normal look-ahead have nothing planned yet, so plan them too.
   if (gt === firstTurn) {
-    for (let d = 1; d <= 2; d++) add('axis', gt + d, AXIS_SUPPLY_TABLE[roll()][AXIS_LETTERS.indexOf(axisConvoyLevel(gt))]);
-    for (let d = 1; d <= 4; d++) add('cw', gt + d, CW_SUPPLY_TABLE[roll()][cwSupplyPeriod(gt + d)]);
+    for (let d = 1; d <= 1; d++) add('axis', gt + d, AXIS_SUPPLY_TABLE[roll()][AXIS_LETTERS.indexOf(axisConvoyLevel(gt))]);
+    for (let d = 1; d <= 3; d++) add('cw', gt + d, CW_SUPPLY_TABLE[roll()][cwSupplyPeriod(gt + d)]);
   }
   add('axis', gt + 2, AXIS_SUPPLY_TABLE[roll()][AXIS_LETTERS.indexOf(axisConvoyLevel(gt))]);
   add('cw', gt + 4, CW_SUPPLY_TABLE[roll()][cwSupplyPeriod(gt + 4)]);
@@ -225,9 +227,18 @@ export function moveSupply(sup, ctx, side, moves, log) {
     if (ctx.enemyHexes.has(m.to)) return 'Cannot enter an enemy-occupied hex.';
     if (supplyAt(sup, dest, side).length >= supplyStackLimit(ctx.map, dest)) return 'Too many supply units in that hex [32.14].';
     s.fuel -= 1; s.pos = dest; s.moved = true;
-    log(side, `A supply unit moves to ${m.to}.`);
+    log(side, `A supply unit moves to ${nameOfHex(...dest)}.`);
   }
   return null;
+}
+// Hexes a supply unit may be moved to this phase (hex key -> CP cost), excluding enemy-held and full hexes.
+export function supplyReach(sup, ctx, side, pos) {
+  const out = {};
+  for (const [k, cost] of costsFrom(ctx, side, pos, SUPPLY_CPA, { motorised: true })) {
+    if (ctx.enemyHexes.has(k) || supplyAt(sup, parseKey(k), side).length >= supplyStackLimit(ctx.map, parseKey(k))) continue;
+    out[k] = cost;
+  }
+  return out;
 }
 export const resetMoved = (sup) => { for (const s of sup.units) s.moved = false; };
 

@@ -18,7 +18,7 @@ import {
   buildMap, initialUnits, initialSupply, initialPortOwners, REINFORCEMENTS, VISION_RANGE,
 } from '../shared/scenario.js';
 import {
-  createSupply, suppliesInRange, fuelNeed, ammoCost, draw, drawHere, available, captureAt, hotWeatherLoss, planArrivals,
+  createSupply, supplyReach, suppliesInRange, fuelNeed, ammoCost, draw, drawHere, available, captureAt, hotWeatherLoss, planArrivals,
   receiveArrivals, sendAxisConvoy, moveSupply, resetMoved, axisConvoyLevel, cwSupplyPeriod,
   MAX_PER_CONVOY_LANE,
 } from './supply.js';
@@ -72,7 +72,7 @@ export function createGame(options = {}) {
     broken: [], // broken-down vehicle markers [21.42]
     winner: null,
     over: false,
-    seed: (Date.now() ^ 0x9e3779b9) >>> 0,
+    seed: Number.isInteger(options.seed) ? options.seed >>> 0 : (Date.now() ^ 0x9e3779b9) >>> 0,
   };
   startGameTurn(g);
   return g;
@@ -810,6 +810,17 @@ function endGameTurn(g) {
 
 // ---------- Views (fog of war) ----------
 
+// Reach is recomputed only when something that could change it has (units cannot move during the trucks phase).
+const reachCache = new WeakMap();
+function cachedSupplyReach(g, sctx, side, x) {
+  const stamp = `${g.turn}:${g.opStage}:${g.half}:${g.supply.units.length}:${g.units.length}:${x.pos}:${g.weather?.type}`;
+  let m = reachCache.get(g);
+  if (!m || m.stamp !== stamp.split(':').slice(0, 4).join(':')) { m = { stamp: stamp.split(':').slice(0, 4).join(':'), by: new Map() }; reachCache.set(g, m); }
+  const k = `${x.id}:${x.pos}:${g.units.length}`;
+  if (!m.by.has(k)) m.by.set(k, supplyReach(g.supply, sctx, side, x.pos));
+  return m.by.get(k);
+}
+
 export function viewFor(g, side) {
   const own = g.units.filter((u) => u.side === side);
   const seen = (pos) => own.some((u) => distance(u.pos, pos) <= VISION_RANGE);
@@ -817,7 +828,12 @@ export function viewFor(g, side) {
     .filter((u) => u.side !== side && seen(u.pos))
     .map(({ id, side: s, nation, name, type, size, str, pos }) => ({ id, side: s, nation, name, type, size, str, pos }));
   const sctx = supplyCtx(g, side);
-  const supply = g.supply.units.filter((x) => x.side === side).map(({ id, pos, ammo, fuel, moved }) => ({ id, side, pos, ammo, fuel, moved: !!moved, own: true }));
+  // During the Truck Convoy Phase each of the phasing side's supply units shows where it may go (15 CP, as a medium truck).
+  const showReach = g.step === 'trucks' && phasingSide(g) === side;
+  const supply = g.supply.units.filter((x) => x.side === side).map((x) => ({
+    id: x.id, side, pos: x.pos, ammo: x.ammo, fuel: x.fuel, moved: !!x.moved, own: true,
+    ...(showReach && !x.moved ? { reach: cachedSupplyReach(g, sctx, side, x) } : {}),
+  }));
   for (const x of g.supply.units.filter((y) => y.side !== side && seen(y.pos))) supply.push({ id: x.id, side: x.side, pos: x.pos, own: false });
   const ownView = own.map((u) => {
     const src = suppliesInRange(g.supply, sctx, u);

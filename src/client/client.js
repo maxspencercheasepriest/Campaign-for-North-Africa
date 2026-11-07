@@ -613,6 +613,16 @@ function drawMap() {
       }
     }
   }
+  // Where the selected supply unit may be moved (Truck Convoy Phase)
+  const selSup = S.game.step === 'trucks' && S.canAct ? (S.game.supply || []).find((x) => x.id === selectedSupply && x.reach) : null;
+  if (selSup) {
+    for (const [k, cost] of Object.entries(selSup.reach)) {
+      if (k === key(...selSup.pos)) continue;
+      const [c, r] = parseKey(k); const { x, y } = centre(c, r);
+      hexPath(x, y, s); ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.fill();
+      if (s >= 16) { ctx.fillStyle = '#222'; ctx.font = `${Math.max(8, s * 0.38)}px "Courier New", monospace`; ctx.textAlign = 'center'; ctx.fillText(fmtCP(cost), x, y + s * 0.55); }
+    }
+  }
   // Reachable hexes with CP cost
   if (reachCache) {
     for (const [k, v] of reachCache) {
@@ -805,6 +815,8 @@ function clickHex([c, r]) {
     const here = (S.game.supply || []).filter((x) => x.own && key(...x.pos) === k0 && !x.moved && !(draft.moves || []).some((m) => m.id === x.id));
     if (here.length && (!selectedSupply || !here.some((x) => x.id === selectedSupply))) { selectedSupply = here[0].id; renderOrders(); drawMap(); return; }
     if (selectedSupply) {
+      const su = (S.game.supply || []).find((x) => x.id === selectedSupply);
+      if (!su?.reach?.[k0]) { toast('A supply unit cannot go there (15 CP by truck, not into the sea or enemy hexes).'); return; }
       draft.moves ||= [];
       draft.moves.push({ id: selectedSupply, to: k0 });
       selectedSupply = null; renderOrders(); drawMap();
@@ -836,6 +848,7 @@ function clickHex([c, r]) {
 // Small hook used by automated UI tests and screenshot scripts.
 window.__desertCommand = {
   reachable() { return reachCache ? [...reachCache.entries()].map(([k, v]) => ({ name: nameOfHex(...parseKey(k)), cost: v.cost, stop: v.stop })) : []; },
+  supplyReach() { const x = (S?.game?.supply || []).find((y) => y.id === selectedSupply); return x?.reach ? Object.keys(x.reach).map((k) => nameOfHex(...parseKey(k))) : []; },
   unitHex(id) { const u = (S?.game?.units || []).find((x) => x.id === id); return u ? nameOfHex(...u.pos) : null; },
   neighbours(name) { return neighbours(...hexFromName(name)).map((h) => nameOfHex(...h)); },
   screenOf(name) {

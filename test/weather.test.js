@@ -88,3 +88,14 @@ test('moving a tank formation far over rough ground can break tanks down, and fi
     assert.equal(before - after, down);
   });
 });
+
+import { createSupply, planArrivals } from '../src/server/supply.js';
+test('arrival planning has exactly one entry per future turn per side', () => {
+  const sup = createSupply({ units: [], box: { axis: [], cw: [] } });
+  sup.plan = [];
+  planArrivals(sup, () => 3, 1, { firstTurn: 1 });
+  for (const side of ['axis', 'cw']) {
+    const turns = sup.plan.filter((p) => p.side === side).map((p) => p.turn);
+    assert.equal(new Set(turns).size, turns.length, `${side} plan has duplicates: ${turns}`);
+  }
+});

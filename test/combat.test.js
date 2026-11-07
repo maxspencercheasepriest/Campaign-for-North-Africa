@@ -7,7 +7,7 @@ import { key, neighbours } from '../src/shared/hex.js';
 import { hexFromName } from '../src/shared/hexnames.js';
 
 function setup(seed) {
-  const g = createGame();
+  const g = createGame({ seed: 1 });
   g.seed = seed;
   submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {}); // convoy
   submitOrders(g, 'axis', { goFirst: true });

@@ -28,7 +28,7 @@ test('initiative ratings chart', () => {
 });
 
 test('sequence of play: naval stage, declaration, A then B, three ops stages, next game-turn', () => {
-  const g = createGame();
+  const g = createGame({ seed: 1 });
   assert.equal(g.turn, 1);
   assert.equal(g.initiative.holder, 'axis'); // scenario rule for GT1
   assert.equal(g.step, 'convoy');
@@ -83,7 +83,7 @@ test('board hex names map onto the grid', () => {
 });
 
 test('capability points, disorganisation and the 150% foot limit', () => {
-  const g = createGame();
+  const g = createGame({ seed: 1 });
   toMoveCombat(g);
   const u = g.units.find((x) => x.id === 'it-62'); // foot, CPA 10
   // Find a run of 8 connected road/track hexes away from everyone (1 CP per hex on foot either way).
@@ -111,7 +111,7 @@ test('capability points, disorganisation and the 150% foot limit', () => {
 });
 
 test('zones of control: stop on entry, no ZOC-to-ZOC, mandatory attack', () => {
-  const g = createGame();
+  const g = createGame({ seed: 1 });
   toMoveCombat(g);
   const mal = g.units.find((x) => x.id === 'it-mal');
   const arm = g.units.find((x) => x.id === 'cw-7arm');
@@ -138,7 +138,7 @@ test('zones of control: stop on entry, no ZOC-to-ZOC, mandatory attack', () => {
 });
 
 test('reaction: a motorised unit may slip away from a slower approaching enemy [8.5]', () => {
-  const g = createGame();
+  const g = createGame({ seed: 1 });
   toMoveCombat(g);
   const inf = g.units.find((x) => x.id === 'it-1cc'); // foot, CPA 10
   const arm = g.units.find((x) => x.id === 'cw-7arm'); // CPA 25
@@ -159,7 +159,7 @@ test('reaction: a motorised unit may slip away from a slower approaching enemy [
 });
 
 test('reaction is blocked when the enemy is 6+ CPA faster [8.53b]', () => {
-  const g = createGame();
+  const g = createGame({ seed: 1 });
   toMoveCombat(g);
   const fast = g.units.find((x) => x.id === 'it-mal'); fast.cpa = 30;
   const slow = g.units.find((x) => x.id === 'cw-7arm'); // CPA 25 -> 30 >= 31? no; make it 20
