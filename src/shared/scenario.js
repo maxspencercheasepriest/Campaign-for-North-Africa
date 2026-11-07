@@ -27,13 +27,31 @@ export const ROLE_NAMES = {
   front: 'Front-line Commander',
 };
 
-export const SCENARIO = {
-  id: 'graziani',
-  name: "Graziani's Offensive",
-  firstTurn: 1,
-  lastTurn: 6,
-  initiativeFirstTurn: 'axis', // the Italians hold the initiative for Game-Turn 1
+// Scenarios that share the Italian-front deployment of section 60.3-60.4 [60.0, 64.0].
+// victory: 'tiers' = the strategic/decisive/tactical test of 60.81; 'points' = occupation points (60.82, 64.73).
+// Point tables map location id -> [Axis points, Commonwealth points] for the side that holds it.
+const ITALIAN_POINTS = { matruh: [100, 0], tobruk: [50, 25], derna: [20, 30], giarabub: [10, 10], siwa: [10, 10], benghazi: [10, 50], agedabia: [10, 50], brega: [0, 50] };
+const CAMPAIGN_POINTS = { matruh: [100, 10], barrani: [50, 10], siwa: [20, 10], jalo: [10, 20], giarabub: [15, 10], bardia: [100, 50], sollum: [25, 10], tobruk: [200, 100], derna: [25, 50], benghazi: [75, 100] };
+
+export const SCENARIOS = {
+  graziani: {
+    id: 'graziani', name: "Graziani's Offensive", firstTurn: 1, lastTurn: 6, initiativeFirstTurn: 'axis',
+    victory: 'tiers', hours: '25-50 hours',
+    blurb: 'The Italian push into Egypt, 15 September 1940. Six Game-Turns; small and quick. Recommended for a first game.',
+  },
+  italian: {
+    id: 'italian', name: 'The Italian Campaign', firstTurn: 1, lastTurn: 20, initiativeFirstTurn: 'axis',
+    victory: 'points', points: ITALIAN_POINTS, hours: '90-150 hours',
+    blurb: "Game-Turns 1-20, through Operation Compass (O'Connor's counter-offensive). Scored on towns held at the end. Reinforcement tables are not all entered yet, so later turns are thin.",
+  },
+  campaign: {
+    id: 'campaign', name: 'The Campaign Game', firstTurn: 1, lastTurn: 111, initiativeFirstTurn: 'axis',
+    victory: 'campaign', points: CAMPAIGN_POINTS, hours: 'a very long time',
+    blurb: 'The whole war, Game-Turns 1-111. Axis win outright by holding Alexandria and Cairo. Reinforcement, replacement and air schedules are not entered yet, so expect it to run dry.',
+  },
 };
+export const SCENARIO = SCENARIOS.graziani; // default
+export const scenarioById = (id) => SCENARIOS[id] || SCENARIOS.graziani;
 
 // Ports for convoys: locations with a port, positioned at their (first) hex.
 export const PORTS = LOCATIONS.filter((l) => l.port).map((l) => ({ id: l.id, name: l.name, col: l.hexes[0][0], row: l.hexes[0][1], capacity: l.capacity }));

@@ -1,6 +1,6 @@
 import { key, parseKey, distance, neighbours, hexToPixel, pixelToHex } from '/shared/hex.js';
 import {
-  MAP_COLS, MAP_ROWS, SIDES, SIDE_NAMES, ROLES, ROLE_NAMES, PORTS, LOCATIONS, VISION_RANGE, buildMap,
+  MAP_COLS, MAP_ROWS, SCENARIOS, SIDES, SIDE_NAMES, ROLES, ROLE_NAMES, PORTS, LOCATIONS, VISION_RANGE, buildMap,
 } from '/shared/scenario.js';
 import { hexFromName, nameOfHex } from '/shared/hexnames.js';
 import { TERRAIN, HEXSIDES, STACKING_POINTS, NON_MOTORISED_VOLUNTARY_LIMIT, CP, stepCost, edgeKey, localWeather } from '/shared/rules.js';
@@ -446,6 +446,16 @@ function wireOrders(el) {
 
 // ---------- Supply / formations ----------
 
+function victoryHtml(v) {
+  if (!v) return '';
+  if (v.mode === 'points') {
+    const me = mySide(), foe = me === 'axis' ? 'cw' : 'axis';
+    return `<h3>Victory points</h3><p>${sideName(me)}: <b>${v[me]}</b> · ${sideName(foe)}: <b>${v[foe]}</b></p><p class="help">Points for the towns each side holds when the scenario ends (60.82, 64.73). The side with most wins.</p>`;
+  }
+  const line = (side) => (v[side] ? `${sideName(side)}: ${v[side].tier} (${esc(v[side].what)})` : `${sideName(side)}: no victory condition met yet`);
+  return `<h3>Victory</h3><p>${line(mySide())}</p><p>${line(mySide() === 'axis' ? 'cw' : 'axis')}</p>`;
+}
+
 function renderSupply() {
   const el = $('tab-supply');
   if (!mySide()) { el.innerHTML = ''; return; }
@@ -459,7 +469,7 @@ function renderSupply() {
     ${sup.map((x) => `<tr><td>${esc(hexLabel(key(...x.pos)))}</td><td>${n(x.ammo)}</td><td>${n(x.fuel)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None in the field.</td></tr>'}</table>
     ${mySide() === 'axis' ? `<p>Waiting in Tripoli: <b>${g.box}</b> supply unit${g.box === 1 ? '' : 's'}.</p>` : ''}
     <p>Prisoners held: <b>${g.prisoners?.[mySide()] ?? 0}</b> TOE points.</p>
-    ${v ? `<p class="help">Victory: ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</p>` : ''}
+    ${victoryHtml(v)}
     <p class="help">Units draw Fuel (once per Operations Stage) and Ammunition (at combat) from supply units within half their CPA [32.2]. Spending past the allowance costs cohesion. A stage spent resting restores up to 5 cohesion (never above 0). At −26 a unit can't move or fight.</p>`;
 }
 
@@ -496,7 +506,11 @@ function renderLobby() {
   const un = S.players.filter((p) => !p.side && p.connected);
   $('unseated').textContent = un.length ? `In the mess tent: ${un.map((p) => p.name).join(', ')}` : '';
 }
-$('startBtn').onclick = () => send({ type: 'start', options: { pastaRule: $('optPasta').checked } });
+const scenSel = $('optScenario');
+scenSel.innerHTML = Object.values(SCENARIOS).map((sc) => `<option value="${sc.id}">${esc(sc.name)} (GT 1-${sc.lastTurn})</option>`).join('');
+const showBlurb = () => { const sc = SCENARIOS[scenSel.value]; $('scenarioBlurb').textContent = `${sc.blurb} Estimated play: ${sc.hours}.`; };
+scenSel.onchange = showBlurb; showBlurb();
+$('startBtn').onclick = () => send({ type: 'start', options: { scenario: scenSel.value } });
 
 // ---------- Tabs ----------
 

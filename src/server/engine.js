@@ -14,7 +14,7 @@
 
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
 import {
-  SIDES, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, SCENARIO,
+  SIDES, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
   buildMap, initialUnits, initialSupply, initialPortOwners, REINFORCEMENTS, VISION_RANGE,
 } from '../shared/scenario.js';
 import {
@@ -50,8 +50,8 @@ export const gameMap = () => (mapCache ||= buildMap());
 export function createGame(options = {}) {
   const g = {
     version: 7,
-    scenario: SCENARIO.id,
-    turn: SCENARIO.firstTurn,
+    scenario: scenarioById(options.scenario).id,
+    turn: scenarioById(options.scenario).firstTurn,
     opStage: 0,
     step: null,
     half: null,
@@ -119,8 +119,8 @@ function startGameTurn(g) {
   };
   const ratings = { axis: initiativeRating('axis', ctx), cw: initiativeRating('cw', ctx) };
   let holder, rolls = null;
-  if (g.turn === SCENARIO.firstTurn && SCENARIO.initiativeFirstTurn) {
-    holder = SCENARIO.initiativeFirstTurn;
+  if (g.turn === scenarioOf(g).firstTurn && scenarioOf(g).initiativeFirstTurn) {
+    holder = scenarioOf(g).initiativeFirstTurn;
   } else {
     let a, c;
     do { a = d6(g) + ratings.axis; c = d6(g) + ratings.cw; } while (a === c); // ties re-roll
@@ -131,7 +131,7 @@ function startGameTurn(g) {
   log(g, 'all', `Game-Turn ${g.turn} (${turnDate(g.turn)}): ${holder === 'axis' ? 'the Axis' : 'the Commonwealth'} holds the Initiative${rolls ? ` (Axis ${rolls.axis} vs Commonwealth ${rolls.cw})` : ' (scenario rule)'}.`);
   // II. Naval Convoy Stage: supply arrivals for this turn, then new plans [32.4]
   receiveArrivals(g.supply, gameMap(), g.turn, (side, text) => log(g, side, text));
-  planArrivals(g.supply, () => d6(g), g.turn, { firstTurn: SCENARIO.firstTurn });
+  planArrivals(g.supply, () => d6(g), g.turn, { firstTurn: scenarioOf(g).firstTurn });
   g.opStage = 0;
   g.order = null;
   g.half = null;
@@ -194,7 +194,8 @@ function endOpStage(g) {
   g.half = null;
   if (g.opStage < OPS_STAGES_PER_TURN) return startOpStage(g, g.opStage + 1);
   endGameTurn(g);
-  if (g.turn >= SCENARIO.lastTurn || g.winner) {
+  g.winner ||= instantWinner(g);
+  if (g.turn >= scenarioOf(g).lastTurn || g.winner) {
     g.over = true;
     g.winner ||= scenarioWinner(g);
     log(g, 'all', `The scenario is over. ${g.winner === 'draw' ? 'Neither side achieved its aims.' : `${g.winner === 'axis' ? 'The Axis' : 'The Commonwealth'} wins.`}`);
@@ -219,16 +220,52 @@ const VICTORY = {
   ],
 };
 const TIER = { strategic: 3, decisive: 2, tactical: 1 };
+const scenarioOf = (g) => scenarioById(g.scenario);
+const hasSupply = (g, side) => g.supply.units.some((s) => s.side === side && (s.ammo > 0 || s.fuel > 0)) || (side === 'axis' && g.supply.box.axis.length > 0);
+
+// Occupation points for the points scenarios [60.82, 64.73]. Ownership is by last occupation (the same state the
+// ports and convoys use); the "enough stores and fuel to count" test of 64.73 is approximated by still having supply.
+export function victoryPoints(g) {
+  const sc = scenarioOf(g);
+  const pts = { axis: 0, cw: 0 };
+  for (const [loc, [a, c]] of Object.entries(sc.points || {})) {
+    const owner = g.portOwners[loc];
+    if (owner === 'axis') pts.axis += a; else if (owner === 'cw') pts.cw += c;
+  }
+  return pts;
+}
+
 export function victoryStatus(g) {
+  const sc = scenarioOf(g);
+  if (sc.victory !== 'tiers') return { mode: 'points', ...victoryPoints(g), supplied: { axis: hasSupply(g, 'axis'), cw: hasSupply(g, 'cw') } };
   const out = {};
   for (const side of SIDES) {
-    const supplied = g.supply.units.some((s) => s.side === side && (s.ammo > 0 || s.fuel > 0)) || (side === 'axis' && g.supply.box.axis.length > 0);
-    const hit = supplied ? VICTORY[side].find(([, , test]) => test(g.portOwners)) : null;
+    const hit = hasSupply(g, side) ? VICTORY[side].find(([, , test]) => test(g.portOwners)) : null;
     out[side] = hit ? { tier: hit[0], what: hit[1] } : null;
   }
   return out;
 }
+
+// Outright wins that end a points scenario early.
+export function instantWinner(g) {
+  const sc = scenarioOf(g);
+  if (sc.victory === 'campaign') {
+    // 64.71: the Axis hold Alexandria and Cairo and can be supplied. 64.72: from Game-Turn 35 an Axis army with no supply loses.
+    if (g.portOwners.alexandria === 'axis' && g.portOwners.cairo === 'axis' && hasSupply(g, 'axis')) { g.victoryLevel = 'strategic'; return 'axis'; }
+    if (g.turn >= 35 && !hasSupply(g, 'axis')) { g.victoryLevel = 'strategic'; return 'cw'; }
+  }
+  if (sc.victory === 'points' && !hasSupply(g, 'axis')) { g.victoryLevel = 'strategic'; return 'cw'; } // 60.82: no Italian supply line
+  return null;
+}
+
 function scenarioWinner(g) {
+  const sc = scenarioOf(g);
+  if (sc.victory !== 'tiers') {
+    const p = victoryPoints(g);
+    if (p.axis === p.cw) return 'draw';
+    g.victoryLevel = 'points';
+    return p.axis > p.cw ? 'axis' : 'cw';
+  }
   const v = victoryStatus(g);
   const a = v.axis ? TIER[v.axis.tier] : 0, c = v.cw ? TIER[v.cw.tier] : 0;
   if (a === c) return 'draw';
@@ -845,8 +882,8 @@ export function viewFor(g, side) {
   return {
     turn: g.turn,
     date: turnDate(g.turn),
-    lastTurn: SCENARIO.lastTurn,
-    scenario: SCENARIO.name,
+    lastTurn: scenarioOf(g).lastTurn,
+    scenario: scenarioOf(g).name,
     opStage: g.opStage,
     step: g.step,
     half: g.half,

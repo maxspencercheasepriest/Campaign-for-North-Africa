@@ -11,7 +11,7 @@
   "scripts": {
     "start": "electron .",
     "server": "node src/server/standalone.js",
-    "test": "node --test --test-force-exit test/tutorial.test.js test/weather.test.js test/tables.test.js test/rules.test.js test/combat.test.js test/multiplayer.test.js",
+    "test": "node --test --test-force-exit test/scenario.test.js test/tutorial.test.js test/weather.test.js test/tables.test.js test/rules.test.js test/combat.test.js test/multiplayer.test.js",
     "dist": "electron-builder --win --publish never",
     "dist:mac": "electron-builder --mac --universal --publish never"
   },
