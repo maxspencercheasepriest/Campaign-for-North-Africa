@@ -19,7 +19,7 @@ export const BASICS = [
   {
     title: 'Sequence of play',
     body: [
-      '1. Convoy: the Axis ships supply units from Tripoli; Commonwealth supply arrives by itself.',
+      '1. Convoy: the Axis plans convoys from Tripoli and picks the Operations Stage each lands in; Commonwealth supply arrives by itself.',
       '2. Initiative: the holder chooses to move first (Player A) or last (Player B) in each Operations Stage.',
       '3. Movement & Combat: Player A moves and fights, then Player B does. Within a phase you alternate movement and combat segments.',
       '4. Truck Convoy: supply units move.',
@@ -62,8 +62,8 @@ export function stepHelp(game, { side, canAct }) {
     case 'convoy':
       if (side === 'cw') return out('Naval Convoy Stage', ['Commonwealth supply arrives by itself in Cairo and Alexandria, so you have nothing to order. Submit to continue.', ...watch]);
       return out('Naval Convoy Stage', [
-        'Pick a port you hold, a lane (1-6) and how many supply units to ship (at most 3 per lane). On the first two turns only lanes 2, 3 and 6 are allowed.',
-        'Convoys can be bombed on the way; bigger ports and lighter air threat land more. Units shipped arrive at the port and must then be trucked forward.',
+        'Plan your convoys. Each one takes a port you hold, a lane (1-6, one convoy per lane), up to 3 supply units from Tripoli, and the Operations Stage it arrives in. On the first two turns only lanes 2, 3 and 6 are allowed.',
+        'A convoy is bombed when it reaches port, using where the Commonwealth divisions are at that moment, so a later stage lets you see before you commit. Units that land appear at the port and must then be trucked forward.',
         ...watch,
       ]);
     case 'declare':

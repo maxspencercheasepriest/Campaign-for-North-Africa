@@ -36,7 +36,9 @@ Legend: ✅ implemented · 🟡 partly or simplified · ⬜ not started · 🔶 
 | 29 | Weather | 🟡 | Done: rolled each Operations Stage by the Initiative holder from the season's row (seasons by date, 29.1), Foul Weather Location Table, hot, sandstorm (double move cost, no storm over delta) and rainstorm (roads cost as tracks, wadis and rivers uncrossable except by road/rail, deltas road-only). Shown on the map. Not yet: 5% fuel/water loss in hot weather, double water use, air effects, wells filling, construction bans. Note: the printed Weather Table lists Game-Turn ranges that do not match the 29.1 dates, so the dates are used. |
 | 30 | Mediterranean Fleet | ⬜ | |
 | 31 | Rommel | 🟡 | His presence raises Axis initiative. |
-| 32 | Abstract logistics and air | 🔶 | Placeholder air points, convoys, trucking and end-of-turn supply. |
+| 32 | Abstract logistics | ✅ (basic) | Supply units (40 Ammo / 60 Fuel), draw by range (half CPA, truck route, not through enemy ZOC), fuel once per Operations Stage, ammo at combat, capture, Truck Convoy Phase (15 CP, 1 Fuel). Axis convoys: up to one per lane (max 3 units), the Axis picks the Operations Stage each lands in and it is bombed then (32.63-32.66, 41.5). Commonwealth supply arrives on its own at the start of the turn. Not yet: Motorization Point loss (32.57), Tactical Shipping, Water/Stores. |
+| 58 | Air | ⛔ abstracted | Interactive air allocation is dropped (Air & Logistics games abstraction, 60.9). Only convoy bombing is modelled. |
+| 60-64 | Scenarios | 🔶 | Graziani's Offensive (GT1-6), The Italian Campaign (GT1-20, points) and the Campaign Game (GT1-111) share the 1940 deployment. Desert Fox, Crusader and El Alamein need their own deployments (61.3, 62.3, 63.3) and are not offered. Reinforcement/replacement tables are mostly not entered. |
 
 ## Air Game (33–46) and Logistics Game (47–58)
 

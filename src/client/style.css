@@ -101,3 +101,6 @@ button.sel { background: var(--blue); }
 .coach .cnav { display: flex; gap: 6px; justify-content: space-between; margin-top: 8px; align-items: center; }
 .coach .cnav button { padding: 3px 10px; }
 .coach button.x { padding: 0 6px; }
+
+.convoy-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; padding: 6px; background: #e4d9b8; border: 1px solid var(--khaki); }
+.convoy-row input[type=number] { width: 44px; }

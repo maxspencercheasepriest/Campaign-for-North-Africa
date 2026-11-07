@@ -27,9 +27,13 @@ function client(url, name, hostToken) {
   return c;
 }
 // Wait until the server has been quiet for 150ms (robust on a busy machine), at most 5s.
+const waitFor = async (fn, ms = 6000) => {
+  const start = Date.now();
+  while (!fn() && Date.now() - start < ms) await new Promise((r) => setTimeout(r, 40));
+};
 const settle = async () => {
   const start = Date.now();
-  await new Promise((r) => setTimeout(r, 150));
+  await new Promise((r) => setTimeout(r, 300));
   while (Date.now() - lastMessage < 150 && Date.now() - start < 5000) await new Promise((r) => setTimeout(r, 50));
 };
 
@@ -94,6 +98,7 @@ test('lobby, seats, fog of war and a full turn of stages', async () => {
   await settle();
 
   // Truck convoy phase belongs to the Rear Area seat; empty, so the C-in-C (host) acts.
+  await waitFor(() => host.state.game.step === 'trucks');
   assert.equal(host.state.game.step, 'trucks');
   host.send({ type: 'submit', orders: { moves: [] } });
   await settle();

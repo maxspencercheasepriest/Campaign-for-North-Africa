@@ -21,7 +21,7 @@ const cityHexes = new Set(LOCATIONS.filter((l) => l.city).flatMap((l) => l.hexes
 export const supplyStackLimit = (map, hex) => (map.tiles[key(...hex)]?.t === 'majorcity' || cityHexes.has(key(...hex)) ? CITY_STACK : OTHER_STACK);
 
 export function createSupply({ units, box }) {
-  const g = { units: [], box, plan: [], nextId: 1 };
+  const g = { units: [], box, plan: [], convoys: [], nextId: 1 };
   for (const u of units) g.units.push({ id: `su${g.nextId++}`, side: u.side, pos: u.pos, ammo: u.ammo, fuel: u.fuel, mp: 30 });
   return g;
 }
@@ -191,26 +191,47 @@ export function convoyBombPoints(units, route) {
   if (bombRow < 0) return 0;
   return [30, 60, 100, 140, 180, 230, 290, 355, 430, 500][bombRow]; // any value within that row's band
 }
-export function sendAxisConvoy(sup, map, { order, units, turn, rollD66, log, portOwners }) {
-  const n = Math.min(order.n ?? 0, MAX_PER_CONVOY_LANE, sup.box.axis.length);
-  if (!n) return;
-  const port = PORTS.find((p) => p.id === order.port);
-  if (!port || portOwners[port.id] !== 'axis') return;
-  const route = order.route || 2;
-  const batch = sup.box.axis.splice(0, n);
-  const bombs = convoyBombPoints(units, route);
-  let lost = 0, pct = 0;
-  if (bombs > 0) {
-    pct = CONVOY_LOSS[convoyBombColumn(bombs)][rollD66()] ?? 0;
-    if (pct >= 20) lost = Math.min(n, Math.max(1, Math.floor((n * pct) / 100))); // [32.65 B]
+// An order is either one convoy ({port, route, n, stage}) or {convoys: [...]}; one convoy per lane per Game-Turn.
+export const convoyList = (order) => (order?.convoys ? order.convoys : order?.n ? [order] : []);
+
+// Axis supply units are assigned to lanes in the Naval Convoy Stage and arrive (or are bombed) in the Naval Convoy
+// Arrival Phase of the Operations Stage the Axis names [32.62-32.63, 20.63]. Units leave the Tripoli box now.
+export function scheduleConvoys(sup, { order, turn, log }) {
+  for (const c of convoyList(order)) {
+    const n = Math.min(c.n ?? 0, MAX_PER_CONVOY_LANE, sup.box.axis.length);
+    if (!n) continue;
+    const stage = [1, 2, 3].includes(c.stage) ? c.stage : 1;
+    (sup.convoys ||= []).push({ turn, stage, port: c.port, route: c.route || 2, units: sup.box.axis.splice(0, n) });
+    log('axis', `Convoy of ${n} supply unit${n > 1 ? 's' : ''} sails on lane ${c.route || 2} for ${PORTS.find((p) => p.id === c.port)?.name ?? c.port}, due in Operations Stage ${stage}.`);
   }
-  const hex = [port.col, port.row];
-  let landed = 0;
-  for (const b of batch.slice(0, n - lost)) {
-    if (supplyAt(sup, hex, 'axis').length >= supplyStackLimit(map, hex)) { sup.box.axis.push(b); continue; }
-    sup.units.push({ id: `su${sup.nextId++}`, side: 'axis', pos: hex, ammo: b.ammo, fuel: b.fuel, mp: 30 }); landed++;
+}
+
+// Naval Convoy Arrival Phase of one Operations Stage: bomb and land the convoys due now.
+export function landConvoys(sup, map, { units, turn, stage, rollD66, log, portOwners }) {
+  const due = (sup.convoys || []).filter((c) => c.turn === turn && c.stage === stage);
+  sup.convoys = (sup.convoys || []).filter((c) => !due.includes(c));
+  for (const c of due) {
+    const n = c.units.length;
+    const port = PORTS.find((p) => p.id === c.port);
+    if (!port || portOwners[port.id] !== 'axis') {
+      sup.box.axis.push(...c.units);
+      log('axis', `${port?.name ?? 'The port'} is no longer in your hands: the convoy turns back to Tripoli.`);
+      continue;
+    }
+    const bombs = convoyBombPoints(units, c.route);
+    let lost = 0, pct = 0;
+    if (bombs > 0) {
+      pct = CONVOY_LOSS[convoyBombColumn(bombs)][rollD66()] ?? 0;
+      if (pct >= 20) lost = Math.min(n, Math.max(1, Math.floor((n * pct) / 100))); // [32.65 B]
+    }
+    const hex = [port.col, port.row];
+    let landed = 0;
+    for (const b of c.units.slice(0, n - lost)) {
+      if (supplyAt(sup, hex, 'axis').length >= supplyStackLimit(map, hex)) { sup.box.axis.push(b); continue; }
+      sup.units.push({ id: `su${sup.nextId++}`, side: 'axis', pos: hex, ammo: b.ammo, fuel: b.fuel, mp: 30 }); landed++;
+    }
+    log('axis', `Convoy on route ${c.route} to ${port.name}: ${bombs ? `bombed (${pct}% loss)` : 'not attacked'}; ${landed} supply unit${landed === 1 ? '' : 's'} landed${lost ? `, ${lost} lost at sea` : ''}.`);
   }
-  log('axis', `Convoy on route ${route} to ${port.name}: ${bombs ? `bombed (${pct}% loss)` : 'not attacked'}; ${landed} supply unit${landed === 1 ? '' : 's'} landed${lost ? `, ${lost} lost at sea` : ''}.`);
 }
 
 // ---------- Moving supply units in the Truck Convoy Phase [32.3] ----------

@@ -321,18 +321,24 @@ function convoyForm() {
     return `<p>Commonwealth supply arrives in Cairo and Alexandria by itself [32.7]. Supply period: <b>${['I', 'II', 'III'][g.supplyPeriod] ?? '–'}</b>.</p>
     <p class="help">Already scheduled: ${esc(next)}.</p><p class="note">Nothing to order this step.</p>`;
   }
-  const ports = PORTS.filter((p) => g.portOwners[p.id] === 'axis');
+  const ports = PORTS.filter((p) => g.portOwners[p.id] === 'axis').sort((a, b) => b.capacity - a.capacity);
   const lanes = g.turn <= 2 ? [2, 3, 6] : [1, 2, 3, 4, 5, 6];
   const box = g.box || 0;
-  draft.port ||= ports.sort((a, b) => b.capacity - a.capacity)[0]?.id || '';
-  draft.route ||= lanes[0];
-  if (draft.n == null) draft.n = Math.min(3, box);
+  draft.convoys ||= box ? [{ port: ports[0]?.id || '', route: lanes[0], n: Math.min(3, box), stage: 1 }] : [];
+  const used = new Set(draft.convoys.map((c) => c.route));
+  const total = draft.convoys.reduce((a, c) => a + (c.n || 0), 0);
   const next = (g.plan || []).map((p) => `GT${p.turn}: ${p.n}`).join(' · ') || 'none';
+  const sea = (g.atSea || []).map((c) => `${c.n} → ${PORTS.find((p) => p.id === c.port)?.name} (GT${c.turn} stage ${c.stage})`).join('; ');
+  const row = (c, i) => `<div class="convoy-row">
+    <select data-cv="port" data-i="${i}">${ports.map((p) => `<option value="${p.id}" ${c.port === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
+    <label>Lane <select data-cv="route" data-i="${i}">${lanes.map((l) => `<option ${c.route === l ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label>Units <input type="number" min="0" max="3" data-cv="n" data-i="${i}" value="${c.n}"></label>
+    <label>Arrives in stage <select data-cv="stage" data-i="${i}">${[1, 2, 3].map((st) => `<option ${c.stage === st ? 'selected' : ''}>${st}</option>`).join('')}</select></label>
+    <button class="x" data-del-convoy="${i}" title="Remove this convoy">✕</button></div>`;
   return `<p>Supply units waiting in Tripoli: <b>${box}</b>. Convoy level this month: <b>${g.convoyLevel ?? '–'}</b>. Arrivals planned: ${esc(next)}.</p>
-  <label class="row">Port <select data-cv="port">${ports.map((p) => `<option value="${p.id}" ${draft.port === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
-  <label class="row">Lane <select data-cv="route">${lanes.map((l) => `<option ${draft.route === l ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-  <label class="row">Supply units (max 3) <input type="number" min="0" max="${Math.min(3, box)}" data-cv="n" value="${draft.n}"></label>
-  <p class="help">Bombing of the lane may sink part of the convoy [32.6]. Set units to 0 to hold the convoy back.</p>`;
+  ${draft.convoys.map(row).join('') || '<p class="muted">No convoys planned this turn.</p>'}
+  <p class="help">Sending ${total} of ${box}. One convoy per lane, at most 3 supply units each [32.62]. Each convoy is bombed when it reaches port, in the Operations Stage you choose, so a later stage lets you see where the Commonwealth divisions are first.${sea ? ` At sea now: ${esc(sea)}.` : ''}</p>
+  <button data-add-convoy ${used.size >= lanes.length || total >= box ? 'disabled' : ''}>Add a convoy</button>`;
 }
 
 function declareForm() {
@@ -421,9 +427,19 @@ function trucksForm() {
 
 function wireOrders(el) {
   el.querySelectorAll('[data-cv]').forEach((i) => (i.onchange = () => {
-    const k = i.dataset.cv;
-    draft[k] = k === 'port' ? i.value : Math.max(0, parseInt(i.value, 10) || 0);
+    const k = i.dataset.cv, c = draft.convoys[+i.dataset.i];
+    c[k] = k === 'port' ? i.value : Math.max(0, parseInt(i.value, 10) || 0);
+    renderOrders();
   }));
+  el.querySelectorAll('[data-del-convoy]').forEach((b) => (b.onclick = () => { draft.convoys.splice(+b.dataset.delConvoy, 1); renderOrders(); }));
+  const addCv = el.querySelector('[data-add-convoy]');
+  if (addCv) addCv.onclick = () => {
+    const lanes = S.game.turn <= 2 ? [2, 3, 6] : [1, 2, 3, 4, 5, 6];
+    const free = lanes.find((l) => !draft.convoys.some((c) => c.route === l));
+    const left = (S.game.box || 0) - draft.convoys.reduce((a, c) => a + c.n, 0);
+    draft.convoys.push({ port: draft.convoys[0]?.port || '', route: free, n: Math.min(3, Math.max(0, left)), stage: 1 });
+    renderOrders();
+  };
   el.querySelectorAll('[data-declare]').forEach((b) => (b.onclick = () => send({ type: 'submit', orders: { goFirst: b.dataset.declare === 'first' } })));
   el.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
     if (b.dataset.act === 'endPhase' && !confirm('End your Movement & Combat Phase?')) return;

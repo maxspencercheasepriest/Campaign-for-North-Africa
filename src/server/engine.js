@@ -19,7 +19,7 @@ import {
 } from '../shared/scenario.js';
 import {
   createSupply, supplyReach, suppliesInRange, fuelNeed, ammoCost, draw, drawHere, available, captureAt, hotWeatherLoss, planArrivals,
-  receiveArrivals, sendAxisConvoy, moveSupply, resetMoved, axisConvoyLevel, cwSupplyPeriod,
+  receiveArrivals, scheduleConvoys, landConvoys, convoyList, moveSupply, resetMoved, axisConvoyLevel, cwSupplyPeriod,
   MAX_PER_CONVOY_LANE,
 } from './supply.js';
 import { resolveCombat, makeRetreat, rawDefensiveCA, syncStr } from './combat.js';
@@ -162,6 +162,7 @@ function startOpStage(g, n) {
   g.opStage = n;
   for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; u.fuelPaid = false; }
   resetMoved(g.supply);
+  convoyArrivalPhase(g);
   rollWeather(g);
   if (g.weather.type === 'hot') hotWeatherLoss(g.supply);
   setStep(g, 'declare');
@@ -316,14 +317,23 @@ export function unready(g, side) {
 function validateOrders(g, side, step, o) {
   switch (step) {
     case 'convoy': {
-      if (side !== 'axis' || !o.n) return null; // only the Axis ships supply [32.6]; the Commonwealth's arrive on their own
-      const p = PORTS.find((x) => x.id === o.port);
-      if (!p) return 'Choose a port for the convoy.';
-      if (g.portOwners[p.id] !== side) return `${p.name} is not in your hands.`;
-      if (!Number.isInteger(o.route) || o.route < 1 || o.route > 6) return 'Choose a convoy route from 1 to 6.';
-      if (g.turn <= 2 && ![2, 3, 6].includes(o.route)) return 'In September 1940 the Italians may only use lanes 2, 3 and 6 [60.37].';
-      if (!Number.isInteger(o.n) || o.n < 0 || o.n > MAX_PER_CONVOY_LANE) return `A convoy lane takes at most ${MAX_PER_CONVOY_LANE} supply units [32.62].`;
-      if (o.n > g.supply.box.axis.length) return `Only ${g.supply.box.axis.length} supply units are waiting in Tripoli.`;
+      const list = convoyList(o);
+      if (side !== 'axis' || !list.length) return null; // only the Axis ships supply [32.6]; the Commonwealth's arrive on their own
+      const lanes = new Set();
+      let total = 0;
+      for (const c of list) {
+        const p = PORTS.find((x) => x.id === c.port);
+        if (!p) return 'Choose a port for each convoy.';
+        if (g.portOwners[p.id] !== side) return `${p.name} is not in your hands.`;
+        if (!Number.isInteger(c.route) || c.route < 1 || c.route > 6) return 'Choose a convoy lane from 1 to 6.';
+        if (g.turn <= 2 && ![2, 3, 6].includes(c.route)) return 'In September 1940 the Italians may only use lanes 2, 3 and 6 [60.37].';
+        if (lanes.has(c.route)) return `Lane ${c.route} is used twice: one convoy per lane.`;
+        lanes.add(c.route);
+        if (!Number.isInteger(c.n) || c.n < 0 || c.n > MAX_PER_CONVOY_LANE) return `A convoy lane takes at most ${MAX_PER_CONVOY_LANE} supply units [32.62].`;
+        if (c.stage != null && ![1, 2, 3].includes(c.stage)) return 'A convoy arrives in Operations Stage 1, 2 or 3.';
+        total += c.n;
+      }
+      if (total > g.supply.box.axis.length) return `Only ${g.supply.box.axis.length} supply units are waiting in Tripoli.`;
       return null;
     }
     case 'trucks':
@@ -346,13 +356,15 @@ function supplyCtx(g, side) {
 }
 
 function resolveConvoy(g, o) {
-  const order = o.axis;
-  if (order?.n) {
-    sendAxisConvoy(g.supply, gameMap(), {
-      order, units: g.units, turn: g.turn, rollD66: () => d6(g) * 10 + d6(g), portOwners: g.portOwners,
-      log: (side, text) => log(g, side, text),
-    });
-  }
+  scheduleConvoys(g.supply, { order: o.axis, turn: g.turn, log: (side, text) => log(g, side, text) });
+}
+
+// Naval Convoy Arrival Phase [III.D]: convoys due in this Operations Stage are bombed and landed.
+function convoyArrivalPhase(g) {
+  landConvoys(g.supply, gameMap(), {
+    units: g.units, turn: g.turn, stage: g.opStage, rollD66: () => d6(g) * 10 + d6(g), portOwners: g.portOwners,
+    log: (side, text) => log(g, side, text),
+  });
 }
 
 function resolveTrucks(g, side, o) {
@@ -364,7 +376,7 @@ function resolveTrucks(g, side, o) {
 export function autoOrders(g, side) {
   if (g.step === 'convoy' && side === 'axis' && g.supply.box.axis.length) {
     const ports = PORTS.filter((p) => g.portOwners[p.id] === 'axis').sort((a, b) => b.capacity - a.capacity);
-    if (ports.length) return { port: ports[0].id, route: g.turn <= 2 ? 2 : 3, n: Math.min(MAX_PER_CONVOY_LANE, g.supply.box.axis.length) };
+    if (ports.length) return { convoys: [{ port: ports[0].id, route: g.turn <= 2 ? 2 : 3, n: Math.min(MAX_PER_CONVOY_LANE, g.supply.box.axis.length), stage: 1 }] };
   }
   return {};
 }
@@ -898,6 +910,7 @@ export function viewFor(g, side) {
     supply,
     box: side === 'axis' ? g.supply.box.axis.length : 0,
     plan: g.supply.plan.filter((p) => p.side === side).map(({ turn, n }) => ({ turn, n })),
+    atSea: side === 'axis' ? (g.supply.convoys || []).map((c) => ({ turn: c.turn, stage: c.stage, port: c.port, route: c.route, n: c.units.length })) : [],
     victory: victoryStatus(g),
     convoyLevel: side === 'axis' ? axisConvoyLevel(g.turn) : null,
     supplyPeriod: side === 'cw' ? cwSupplyPeriod(g.turn) : null,
