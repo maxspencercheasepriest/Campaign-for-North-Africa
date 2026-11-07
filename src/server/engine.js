@@ -15,9 +15,13 @@
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
 import {
   SIDES, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, SCENARIO,
-  buildMap, initialUnits, initialDumps, initialPortOwners, REINFORCEMENTS,
-  AIR_POINTS, TRUCK_CAPACITY, CONVOY, FUEL_EVAPORATION, SUPPLY_RANGE, VISION_RANGE,
+  buildMap, initialUnits, initialSupply, initialPortOwners, REINFORCEMENTS, VISION_RANGE,
 } from '../shared/scenario.js';
+import {
+  createSupply, suppliesInRange, fuelNeed, ammoCost, draw, drawHere, available, captureAt, hotWeatherLoss, planArrivals,
+  receiveArrivals, sendAxisConvoy, moveSupply, resetMoved, axisConvoyLevel, cwSupplyPeriod,
+  MAX_PER_CONVOY_LANE,
+} from './supply.js';
 import { resolveCombat, makeRetreat, rawDefensiveCA, syncStr } from './combat.js';
 import {
   turnDate, initiativeRating, CP, NON_MOTORISED_VOLUNTARY_LIMIT, COHESION_MAX, COHESION_COLLAPSE,
@@ -27,7 +31,6 @@ import {
 import { WEATHER, FOUL_WEATHER_SECTIONS, BREAKDOWN, breakdownColumn } from '../shared/tables.js';
 import { WEAPONS } from '../shared/weapons.js';
 
-const RES = ['fuel', 'water', 'ammo', 'stores'];
 const other = (side) => (side === 'axis' ? 'cw' : 'axis');
 
 // Steps of the sequence of play, in order. kind:
@@ -35,11 +38,10 @@ const other = (side) => (side === 'axis' ? 'cw' : 'axis');
 //   holder       - only the Initiative holder decides
 //   phasing      - only the current phasing player (Player A, then Player B) acts
 export const STEPS = {
-  air: { name: 'Air Allocation', role: 'air', kind: 'simultaneous', placeholder: true },
-  convoy: { name: 'Naval Convoy Stage', role: 'logistics', kind: 'simultaneous', placeholder: true },
+  convoy: { name: 'Naval Convoy Stage', role: 'logistics', kind: 'simultaneous' },
   declare: { name: 'Initiative Declaration', role: 'cic', kind: 'holder' },
   movecombat: { name: 'Movement & Combat Phase', role: 'front', kind: 'phasing' },
-  trucks: { name: 'Truck Convoy Movement Phase', role: 'rear', kind: 'phasing', placeholder: true },
+  trucks: { name: 'Truck Convoy Movement Phase', role: 'rear', kind: 'phasing' },
 };
 
 let mapCache = null;
@@ -47,7 +49,7 @@ export const gameMap = () => (mapCache ||= buildMap());
 
 export function createGame(options = {}) {
   const g = {
-    version: 6,
+    version: 7,
     scenario: SCENARIO.id,
     turn: SCENARIO.firstTurn,
     opStage: 0,
@@ -58,9 +60,8 @@ export function createGame(options = {}) {
     seg: null,
     options: { pastaRule: true, ...options },
     units: initialUnits(),
-    dumps: initialDumps(),
+    supply: createSupply(initialSupply()),
     portOwners: initialPortOwners(),
-    air: { axis: null, cw: null },
     pending: { axis: null, cw: null },
     ready: { axis: false, cw: false },
     log: [],
@@ -128,11 +129,13 @@ function startGameTurn(g) {
   }
   g.initiative = { holder, ratings, rolls };
   log(g, 'all', `Game-Turn ${g.turn} (${turnDate(g.turn)}): ${holder === 'axis' ? 'the Axis' : 'the Commonwealth'} holds the Initiative${rolls ? ` (Axis ${rolls.axis} vs Commonwealth ${rolls.cw})` : ' (scenario rule)'}.`);
-  // II. Naval Convoy Stage (abstracted for now)
+  // II. Naval Convoy Stage: supply arrivals for this turn, then new plans [32.4]
+  receiveArrivals(g.supply, gameMap(), g.turn, (side, text) => log(g, side, text));
+  planArrivals(g.supply, () => d6(g), g.turn, { firstTurn: SCENARIO.firstTurn });
   g.opStage = 0;
   g.order = null;
   g.half = null;
-  setStep(g, 'air');
+  setStep(g, 'convoy');
 }
 
 function setStep(g, step) {
@@ -157,8 +160,10 @@ export const weatherAt = (g, hex) => localWeather(g.weather, gameMap(), hex);
 
 function startOpStage(g, n) {
   g.opStage = n;
-  for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; }
+  for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; u.fuelPaid = false; }
+  resetMoved(g.supply);
   rollWeather(g);
+  if (g.weather.type === 'hot') hotWeatherLoss(g.supply);
   setStep(g, 'declare');
 }
 
@@ -171,7 +176,6 @@ function beginHalf(g, half) {
 
 function advance(g) {
   switch (g.step) {
-    case 'air': setStep(g, 'convoy'); break;
     case 'convoy': startOpStage(g, 1); break;
     case 'declare': beginHalf(g, 'A'); break;
     case 'movecombat': setStep(g, 'trucks'); repairPhase(g, phasingSide(g)); break;
@@ -200,11 +204,37 @@ function endOpStage(g) {
   startGameTurn(g);
 }
 
+// Victory conditions of Graziani's Offensive [60.81]. "In supply" is approximated by the side still having
+// supply units to draw on; the full supply-line trace comes with the Logistics Game.
+const VICTORY = {
+  axis: [
+    ['strategic', 'Alexandria or Cairo', (o) => o.alexandria === 'axis' || o.cairo === 'axis'],
+    ['decisive', 'Mersa Matruh and Siwa', (o) => o.matruh === 'axis' && o.siwa === 'axis'],
+    ['tactical', 'Sidi Barrani, with Sollum, Fort Maddalena and Giarabub', (o) => ['barrani', 'sollum', 'maddalena', 'giarabub'].every((l) => o[l] === 'axis')],
+  ],
+  cw: [
+    ['strategic', 'Tobruk', (o) => o.tobruk === 'cw'],
+    ['decisive', 'Bardia, Fort Maddalena, Sidi Omar, Sollum and Siwa', (o) => ['bardia', 'maddalena', 'sidiomar', 'sollum', 'siwa'].every((l) => o[l] === 'cw')],
+    ['tactical', 'Sollum, Halfaya Pass and Siwa', (o) => ['sollum', 'halfaya', 'siwa'].every((l) => o[l] === 'cw')],
+  ],
+};
+const TIER = { strategic: 3, decisive: 2, tactical: 1 };
+export function victoryStatus(g) {
+  const out = {};
+  for (const side of SIDES) {
+    const supplied = g.supply.units.some((s) => s.side === side && (s.ammo > 0 || s.fuel > 0)) || (side === 'axis' && g.supply.box.axis.length > 0);
+    const hit = supplied ? VICTORY[side].find(([, , test]) => test(g.portOwners)) : null;
+    out[side] = hit ? { tier: hit[0], what: hit[1] } : null;
+  }
+  return out;
+}
 function scenarioWinner(g) {
-  // Placeholder until the scenario victory conditions (60.71) are implemented:
-  // Axis wins Graziani's Offensive by holding Sidi Barrani or anything further east.
-  const east = ['barrani', 'matruh', 'alexandria'];
-  return east.some((p) => g.portOwners[p] === 'axis') ? 'axis' : 'cw';
+  const v = victoryStatus(g);
+  const a = v.axis ? TIER[v.axis.tier] : 0, c = v.cw ? TIER[v.cw.tier] : 0;
+  if (a === c) return 'draw';
+  const side = a > c ? 'axis' : 'cw';
+  g.victoryLevel = v[side].tier;
+  return side;
 }
 
 // ---------- Orders (form-based steps) ----------
@@ -221,7 +251,7 @@ export function submitOrders(g, side, orders) {
     g.pending[side] = orders;
     g.ready[side] = true;
     if (SIDES.every((s) => g.ready[s])) {
-      ({ air: resolveAir, convoy: resolveConvoy })[g.step](g, { axis: g.pending.axis, cw: g.pending.cw });
+      resolveConvoy(g, { axis: g.pending.axis, cw: g.pending.cw });
       advance(g);
     }
     return null;
@@ -248,80 +278,58 @@ export function unready(g, side) {
 
 function validateOrders(g, side, step, o) {
   switch (step) {
-    case 'air': {
-      const vals = ['malta', 'escort', 'ground'].map((k) => o[k] ?? 0);
-      if (vals.some((v) => !Number.isInteger(v) || v < 0)) return 'Air points must be whole numbers.';
-      if (vals.reduce((a, b) => a + b, 0) > AIR_POINTS[side]) return `You only have ${AIR_POINTS[side]} air points.`;
-      return null;
-    }
     case 'convoy': {
-      if (!o.port) return null;
+      if (side !== 'axis' || !o.n) return null; // only the Axis ships supply [32.6]; the Commonwealth's arrive on their own
       const p = PORTS.find((x) => x.id === o.port);
-      if (!p) return 'Unknown port.';
+      if (!p) return 'Choose a port for the convoy.';
       if (g.portOwners[p.id] !== side) return `${p.name} is not in your hands.`;
+      if (!Number.isInteger(o.route) || o.route < 1 || o.route > 6) return 'Choose a convoy route from 1 to 6.';
+      if (g.turn <= 2 && ![2, 3, 6].includes(o.route)) return 'In September 1940 the Italians may only use lanes 2, 3 and 6 [60.37].';
+      if (!Number.isInteger(o.n) || o.n < 0 || o.n > MAX_PER_CONVOY_LANE) return `A convoy lane takes at most ${MAX_PER_CONVOY_LANE} supply units [32.62].`;
+      if (o.n > g.supply.box.axis.length) return `Only ${g.supply.box.axis.length} supply units are waiting in Tripoli.`;
       return null;
     }
-    case 'trucks': {
-      let load = 0;
-      for (const t of o.transfers || []) {
-        const from = g.dumps[t.from];
-        if (!from || from.side !== side) return 'Transfers must start at one of your dumps.';
-        if (!RES.includes(t.res)) return 'Unknown resource.';
-        if (!Number.isInteger(t.amount) || t.amount <= 0) return 'Amounts must be positive whole numbers.';
-        if (from[t.res] < t.amount) return `Not enough ${t.res} at that dump.`;
-        const dest = g.dumps[t.to];
-        const ownUnitThere = g.units.some((u) => u.side === side && key(...u.pos) === t.to);
-        if (!(dest && dest.side === side) && !ownUnitThere) return 'Destination must be your dump or a hex your units hold.';
-        load += t.amount * Math.max(1, Math.ceil(distance(parseKey(t.from), parseKey(t.to)) / 8));
-      }
-      if (load > TRUCK_CAPACITY[side]) return `Over truck capacity (${load}/${TRUCK_CAPACITY[side]}).`;
-      return null;
-    }
+    case 'trucks':
+      return Array.isArray(o.moves || []) ? null : 'Moves must be a list.';
     default:
       return null;
   }
 }
 
-function resolveAir(g, o) {
-  for (const s of SIDES) {
-    const x = o[s] || {};
-    g.air[s] = { malta: x.malta || 0, escort: x.escort || 0, ground: x.ground || 0 };
-    log(g, s, `Air: ${g.air[s].malta} on Malta missions, ${g.air[s].escort} on convoy escort, ${g.air[s].ground} on ground support.`);
-  }
+// Supply and reach need to know about enemies and weather.
+function supplyCtx(g, side) {
+  const map = gameMap();
+  const enemyHexes = new Set(g.units.filter((u) => u.side !== side && u.str > 0).map((u) => key(...u.pos)));
+  return {
+    map,
+    enemyHexes,
+    weatherAt: (hex) => weatherAt(g, hex),
+    zocBlocked: (sd, hex) => inEnemyZoc(g, { side: sd }, hex),
+  };
 }
 
 function resolveConvoy(g, o) {
-  const a = g.air.axis || {}, c = g.air.cw || {};
-  const lossPct = {
-    axis: clamp(15 + 8 * (c.malta || 0) - 6 * (a.malta || 0) - 4 * (a.escort || 0), 0, 80),
-    cw: clamp(10 + 2 * (a.escort || 0) - 3 * (c.escort || 0), 0, 50),
-  };
-  for (const s of SIDES) {
-    const portId = o[s]?.port;
-    if (!portId) continue;
-    const p = PORTS.find((x) => x.id === portId);
-    const k = key(p.col, p.row);
-    const dump = (g.dumps[k] ||= { side: s, fuel: 0, water: 0, ammo: 0, stores: 0 });
-    const landed = {};
-    for (const r of RES) {
-      landed[r] = Math.floor(CONVOY[s][r] * (1 - lossPct[s] / 100) * p.capacity);
-      dump[r] += landed[r];
-    }
-    log(g, s, `Convoy to ${p.name}: ${lossPct[s]}% lost at sea; port landed ${fmt(landed)}.`);
+  const order = o.axis;
+  if (order?.n) {
+    sendAxisConvoy(g.supply, gameMap(), {
+      order, units: g.units, turn: g.turn, rollD66: () => d6(g) * 10 + d6(g), portOwners: g.portOwners,
+      log: (side, text) => log(g, side, text),
+    });
   }
 }
 
 function resolveTrucks(g, side, o) {
-  for (const t of o.transfers || []) {
-    const from = g.dumps[t.from];
-    if (!from || from[t.res] < t.amount) continue;
-    from[t.res] -= t.amount;
-    const truckFuel = Math.ceil((t.amount * distance(parseKey(t.from), parseKey(t.to))) / 40);
-    from.fuel = Math.max(0, from.fuel - truckFuel);
-    const dest = (g.dumps[t.to] ||= { side, fuel: 0, water: 0, ammo: 0, stores: 0 });
-    dest[t.res] += t.amount;
-    log(g, side, `Truck convoy moved ${t.amount} ${t.res} (${truckFuel} fuel burned).`);
+  const err = moveSupply(g.supply, supplyCtx(g, side), side, o.moves || [], (sd, text) => log(g, sd, text));
+  if (err) log(g, side, `Supply movement stopped: ${err}`);
+}
+
+// What an unseated side does by itself: the Axis sends a full convoy to its best port.
+export function autoOrders(g, side) {
+  if (g.step === 'convoy' && side === 'axis' && g.supply.box.axis.length) {
+    const ports = PORTS.filter((p) => g.portOwners[p.id] === 'axis').sort((a, b) => b.capacity - a.capacity);
+    if (ports.length) return { port: ports[0].id, route: g.turn <= 2 ? 2 : 3, n: Math.min(MAX_PER_CONVOY_LANE, g.supply.box.axis.length) };
   }
+  return {};
 }
 
 // ---------- Capability points & cohesion [6.0] ----------
@@ -439,7 +447,6 @@ function actMove(g, side, a) {
   if (collapsed(u)) return `${u.name} is too disorganised to move (cohesion ${u.cohesion}).`;
   if (g.seg.moved.includes(u.id)) return `${u.name} has already moved this segment.`;
   if (g.seg.frozen.includes(u.id)) return `${u.name} finished a segment more than ${CONTINUAL_MOVE_RANGE} hexes from the enemy and cannot move again this phase [8.23].`;
-  if (u.motorised && u.fuel <= 0) return `${u.name} has no fuel.`;
   const plan = planMove(g, u, a.path);
   if (typeof plan === 'string') return plan;
   if (u.cpa <= 10 && u.cpUsed + plan.cp > u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT) {
@@ -450,6 +457,7 @@ function actMove(g, side, a) {
   g.seg.moved.push(u.id);
   checkBreakdown(g, u, u.start);
   captureBroken(g, u);
+  if (isCombatUnit(u)) { const n = captureAt(g.supply, u.pos, side); if (n) log(g, 'all', `${u.name} captures ${n} supply unit${n > 1 ? 's' : ''}!`); }
   offerReaction(g, u);
   // Totally disorganised enemies surrender when approached [6.26].
   for (const e of g.units.filter((x) => x.side !== side && collapsed(x) && distance(x.pos, u.pos) === 1)) {
@@ -466,10 +474,11 @@ function doMove(g, u, path, plan) {
   const dest = path.at(-1);
   const stackAfter = hexSP(unitsAt(g, dest).filter((x) => x.side === u.side && x !== u)) + (STACKING_POINTS[u.size] ?? 0);
   if (stackAfter > stackingLimit(gameMap(), dest)) return `Stacking limit exceeded at ${key(...dest)} (${stackAfter}/${stackingLimit(gameMap(), dest)}) [9.31].`;
-  // Fuel: placeholder of 1 point per hex until the Fuel Consumption Chart (49.19) is in.
-  if (u.motorised) {
-    if (u.fuel < path.length) return `${u.name} has only ${u.fuel} fuel.`;
-    u.fuel -= path.length;
+  // Fuel is paid once per Operations Stage from a supply unit within half the unit's CPA [32.23, 32.16].
+  if (!u.fuelPaid) {
+    const need = fuelNeed(u);
+    if (need && !draw(g.supply, supplyCtx(g, u.side), u, 'fuel', need)) return `${u.name} needs ${need} Fuel from a supply unit within ${u.cpa / 2} CP [32.23].`;
+    u.fuelPaid = true;
   }
   spendCP(g, u, plan.cp);
   u.bp += plan.bp;
@@ -564,12 +573,9 @@ function repairPhase(g, side) {
     if (inEnemyZoc(g, stack[0], b.pos) || g.units.some((x) => x.side !== side && distance(x.pos, b.pos) === 0)) continue; // enemy-controlled hex [22.13a]
     const wx = weatherAt(g, b.pos);
     if (wx === 'sand' || wx === 'rain') continue; // [22.13d]
-    // One Fuel Point per tank point attempted, taken from the units there (placeholder until the logistics game) [22.26].
-    let fuel = stack.reduce((x, y) => x + (y.fuel || 0), 0);
-    const attempt = Math.min(b.n, fuel);
+    // One Fuel Point per tank point attempted, taken from supply units in the hex [22.26].
+    const attempt = drawHere(g.supply, b.pos, side, 'fuel', b.n);
     if (!attempt) continue;
-    let need = attempt;
-    for (const x of stack) { const t = Math.min(need, x.fuel || 0); x.fuel -= t; need -= t; }
     const pct = FIELD_TANK_PCT[d6(g)];
     if (!pct || (attempt === 1 && pct === 10)) { log(g, side, `Field repair of ${b.w} at ${key(...b.pos)} fails.`); continue; }
     const fixed = Math.min(attempt, Math.ceil((pct / 100) * attempt - 1e-9));
@@ -679,10 +685,20 @@ function actAttack(g, side, a) {
     if (distance(u.pos, targetPos) !== 1) return `${u.name} is not adjacent to ${target.name}.`;
     if (collapsed(u)) return `${u.name} is too disorganised to attack.`;
     if (!isCombatUnit(u)) return `${u.name} is not a combat unit.`;
-    if (u.ammo <= 0) return `${u.name} is out of ammunition [15.15].`;
     const e = map.hexsides[edgeKey(u.pos, targetPos)];
     if (u.motorised && e?.type === 'escarpment' && e.down === key(...u.pos)) return `${u.name} is motorised and cannot assault up an escarpment [15.34].`;
     if (u.motorised && map.tiles[key(...targetPos)].t === 'saltmarsh') return `${u.name} is motorised and cannot assault into a salt marsh [8.44].`;
+  }
+  // Ammunition is spent at the instant of combat from supply units within half the CPA [32.21, 32.22].
+  const snap = JSON.parse(JSON.stringify(g.supply.units));
+  const sctx = supplyCtx(g, side);
+  for (const u of attackers) {
+    const cost = ammoCost(u, true);
+    if (!draw(g.supply, sctx, u, 'ammo', cost)) {
+      g.supply.units = snap;
+      return `${u.name} needs ${cost} Ammo from a supply unit within ${u.cpa / 2} CP to attack [32.21].`;
+    }
+    u.ammo = 1;
   }
   // The hex counts as attacked from now on [15.23]; the defender now makes its choices [12.1, 13.0, 14.0].
   g.seg.attacked.push(key(...targetPos));
@@ -730,6 +746,15 @@ function actDefend(g, side, a = {}) {
     tankRole: a.tankRole === 'assault' ? 'assault' : 'antiArmour',
     retreat: new Set((a.retreat || []).filter((id) => d.defenderIds.includes(id))),
   };
+  // Defenders spend ammunition too; a unit that cannot pay cannot fire its guns [32.21].
+  const sctx = supplyCtx(g, d.side);
+  for (const id of d.defenderIds) {
+    const u = g.units.find((x) => x.id === id);
+    if (!u) continue;
+    const paid = draw(g.supply, sctx, u, 'ammo', ammoCost(u, false, { barrage: !!a.artilleryForward }));
+    u.ammo = paid ? 1 : 0;
+    if (!paid && a.artilleryForward) { defOpts.artilleryForward = false; log(g, 'all', `${u.name} has no ammunition and cannot fire.`); }
+  }
   const res = resolveCombat(g, ctx, attackers, atk.targetPos, { probe: atk.probe, artilleryForward: atk.artilleryForward, tankRole: atk.tankRole, defence: defOpts });
   g.lastCombat = { turn: g.turn, stage: g.opStage, lines: res.lines, title: `${attackers.map((u) => u.name).join(', ')} → ${atk.targetName}` };
   removeDestroyed(g);
@@ -762,44 +787,11 @@ function updateOwnership(g) {
       log(g, 'all', `${l.name} has been taken by the ${here[0].side === 'axis' ? 'Axis' : 'Commonwealth'}.`);
     }
   }
-  for (const [k, d] of Object.entries(g.dumps)) {
-    const here = g.units.filter((u) => key(...u.pos) === k);
-    if (here.length && here.every((u) => u.side !== d.side)) {
-      d.side = here[0].side;
-      log(g, 'all', `A supply dump has been captured intact (${fmt(d)}).`);
-    }
-  }
 }
 
-// ---------- End of Game-Turn (PLACEHOLDER supply until 32.0 / Logistics Game) ----------
+// ---------- End of Game-Turn ----------
 
 function endGameTurn(g) {
-  for (const u of g.units) {
-    const dumps = Object.entries(g.dumps)
-      .filter(([k, d]) => d.side === u.side && distance(parseKey(k), u.pos) <= SUPPLY_RANGE)
-      .sort(([a], [b]) => distance(parseKey(a), u.pos) - distance(parseKey(b), u.pos));
-    const caps = { fuel: u.motorised ? 30 : 0, water: 3, ammo: 3 };
-    for (const r of ['fuel', 'water', 'ammo']) {
-      for (const [, d] of dumps) {
-        const need = caps[r] - u[r];
-        if (need <= 0) break;
-        const take = Math.min(need, Math.floor(d[r]));
-        d[r] -= take; u[r] += take;
-      }
-    }
-    const waterNeed = 1 + (g.options.pastaRule && u.nation === 'it' ? 1 : 0);
-    u.water -= waterNeed;
-    if (u.water < 0) {
-      u.water = 0;
-      const big = [...u.elements].sort((a, b) => b.toe - a.toe)[0];
-      if (big) { big.toe -= 1; syncStr(u); }
-      log(g, u.side, `${u.name} is out of water and loses a step.`);
-    }
-  }
-  for (const d of Object.values(g.dumps)) {
-    d.fuel = Math.floor(d.fuel * (1 - FUEL_EVAPORATION[d.side]));
-    d.water = Math.floor(d.water * 0.98);
-  }
   removeDestroyed(g);
 
   for (const r of REINFORCEMENTS.filter((x) => x.turn === g.turn + 1)) {
@@ -814,8 +806,6 @@ function endGameTurn(g) {
     log(g, r.unit.side, `Reinforcements: ${r.unit.name} arrives at ${p.name}.`);
   }
 
-  if (g.portOwners.alexandria === 'axis' && g.portOwners.cairo === 'axis') g.winner = 'axis';
-  else if (g.portOwners.benghazi === 'cw' && g.portOwners.agheila === 'cw') g.winner = 'cw';
 }
 
 // ---------- Views (fog of war) ----------
@@ -826,11 +816,13 @@ export function viewFor(g, side) {
   const enemy = g.units
     .filter((u) => u.side !== side && seen(u.pos))
     .map(({ id, side: s, nation, name, type, size, str, pos }) => ({ id, side: s, nation, name, type, size, str, pos }));
-  const dumps = {};
-  for (const [k, d] of Object.entries(g.dumps)) {
-    if (d.side === side) dumps[k] = d;
-    else if (seen(parseKey(k))) dumps[k] = { side: d.side, spotted: true };
-  }
+  const sctx = supplyCtx(g, side);
+  const supply = g.supply.units.filter((x) => x.side === side).map(({ id, pos, ammo, fuel, moved }) => ({ id, side, pos, ammo, fuel, moved: !!moved, own: true }));
+  for (const x of g.supply.units.filter((y) => y.side !== side && seen(y.pos))) supply.push({ id: x.id, side: x.side, pos: x.pos, own: false });
+  const ownView = own.map((u) => {
+    const src = suppliesInRange(g.supply, sctx, u);
+    return { ...u, fuelNeed: fuelNeed(u), fuelAvail: src.reduce((a, x) => a + x.fuel, 0), ammoAvail: src.reduce((a, x) => a + x.ammo, 0) };
+  });
   const obligations = g.step === 'movecombat' && phasingSide(g) === side
     ? attackObligations(g, side).filter((o) => seen(o.enemy.pos)).map((o) => ({ enemyId: o.enemy.id, hex: key(...o.enemy.pos), met: g.seg.attacked.includes(key(...o.enemy.pos)) }))
     : [];
@@ -849,12 +841,14 @@ export function viewFor(g, side) {
     ready: g.ready,
     myOrders: g.pending[side],
     acting: actingSides(g),
-    units: [...own, ...enemy],
-    dumps,
+    units: [...ownView, ...enemy],
+    supply,
+    box: side === 'axis' ? g.supply.box.axis.length : 0,
+    plan: g.supply.plan.filter((p) => p.side === side).map(({ turn, n }) => ({ turn, n })),
+    victory: victoryStatus(g),
+    convoyLevel: side === 'axis' ? axisConvoyLevel(g.turn) : null,
+    supplyPeriod: side === 'cw' ? cwSupplyPeriod(g.turn) : null,
     portOwners: g.portOwners,
-    air: g.air[side],
-    airPoints: AIR_POINTS[side],
-    truckCapacity: TRUCK_CAPACITY[side],
     options: g.options,
     obligations,
     decision: g.decision ? { ...g.decision, mine: g.decision.side === side } : null,
@@ -869,4 +863,3 @@ export function viewFor(g, side) {
 }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const fmt = (d) => RES.map((r) => `${r} ${Math.floor(d[r] ?? 0)}`).join(', ');

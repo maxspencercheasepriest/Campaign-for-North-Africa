@@ -22,7 +22,8 @@ let ws;
 let S = null; // last state from server
 let draft = {}; // orders being built for the current stage
 let draftStageKey = null;
-let selected = null; // selected own unit id
+let selected = null;
+let selectedSupply = null; // selected own unit id
 let hoverHex = null;
 
 // ---------- Connection ----------
@@ -153,7 +154,7 @@ function reachable(u, { reaction = false } = {}) {
   const startZoc = zocAt(u, u.pos) || u.contact;
   const base = startZoc && !reaction ? (u.engaged ? CP.disengage : CP.breakContact) : 0;
   const cap = u.cpa <= 10 ? u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT - u.cpUsed : Infinity;
-  const maxSteps = u.motorised ? u.fuel : Infinity;
+  const maxSteps = Infinity; // fuel is paid once per Operations Stage from supply units [32.23], not per hex
   const best = new Map([[key(...u.pos), { cost: base, steps: 0, prev: null, stop: false }]]);
   const queue = [u.pos];
   const enemyAt = new Set(enemyUnits().map((e) => key(...e.pos)));
@@ -208,13 +209,13 @@ function renderOrders() {
   } else if (!S.canAct) {
     head += `<p class="note">${esc(S.actingFor || 'Nobody')} (${esc(ROLE_NAMES[st.role])} or stand-in) is acting for ${sideName(mySide())}. Advise them in staff chat.</p>`;
   }
-  const body = ({ air: airForm, convoy: convoyForm, declare: declareForm, movecombat: moveCombatPanel, trucks: trucksForm })[g.step]();
+  const body = ({ convoy: convoyForm, declare: declareForm, movecombat: moveCombatPanel, trucks: trucksForm })[g.step]();
   el.innerHTML = head + body;
   if (!S.canAct) for (const input of el.querySelectorAll('input, select, button')) input.disabled = true;
-  if (S.canAct && ['air', 'convoy', 'trucks'].includes(g.step)) {
+  if (S.canAct && ['convoy', 'trucks'].includes(g.step)) {
     const btn = document.createElement('button');
     btn.className = 'primary';
-    btn.textContent = g.step === 'trucks' ? 'Dispatch convoys and finish' : 'Submit orders';
+    btn.textContent = g.step === 'trucks' ? 'Move supply units and finish' : 'Submit orders';
     btn.onclick = () => send({ type: 'submit', orders: draft });
     el.appendChild(btn);
   }
@@ -268,20 +269,25 @@ function wireDecision(el, d) {
 
 const reactionMode = () => S.game.decision?.kind === 'reaction' && S.game.decision.mine && S.canAct;
 
-function airForm() {
-  const pts = S.game.airPoints;
-  const v = (k) => draft[k] ?? 0;
-  const used = ['malta', 'escort', 'ground'].reduce((a, k) => a + v(k), 0);
-  return `<p>Allot your ${pts} air points. <b>${used}/${pts}</b> assigned.</p>
-  <label class="row">Malta missions <input type="number" min="0" max="${pts}" data-air="malta" value="${v('malta')}"></label>
-  <label class="row">Convoy escort <input type="number" min="0" max="${pts}" data-air="escort" value="${v('escort')}"></label>
-  <label class="row">Ground support <input type="number" min="0" max="${pts}" data-air="ground" value="${v('ground')}"></label>`;
-}
-
 function convoyForm() {
-  const ports = PORTS.filter((p) => S.game.portOwners[p.id] === mySide());
-  return `<p>Choose where this week's convoy unloads. Bigger ports land more of it.</p>
-  <select data-convoy><option value="">No convoy</option>${ports.map((p) => `<option value="${p.id}" ${draft.port === p.id ? 'selected' : ''}>${p.name} (capacity ${Math.round(p.capacity * 100)}%)</option>`).join('')}</select>`;
+  const g = S.game;
+  if (mySide() === 'cw') {
+    const next = (g.plan || []).map((p) => `Game-Turn ${p.turn}: ${p.n}`).join(' · ') || 'none planned';
+    return `<p>Commonwealth supply arrives in Cairo and Alexandria by itself [32.7]. Supply level this period: <b>${g.supplyPeriod ?? '–'}</b>.</p>
+    <p class="help">Already scheduled: ${esc(next)}.</p><p class="note">Nothing to order this step.</p>`;
+  }
+  const ports = PORTS.filter((p) => g.portOwners[p.id] === 'axis');
+  const lanes = g.turn <= 2 ? [2, 3, 6] : [1, 2, 3, 4, 5, 6];
+  const box = g.box || 0;
+  draft.port ||= ports.sort((a, b) => b.capacity - a.capacity)[0]?.id || '';
+  draft.route ||= lanes[0];
+  if (draft.n == null) draft.n = Math.min(3, box);
+  const next = (g.plan || []).map((p) => `GT${p.turn}: ${p.n}`).join(' · ') || 'none';
+  return `<p>Supply units waiting in Tripoli: <b>${box}</b>. Convoy level this month: <b>${g.convoyLevel ?? '–'}</b>. Arrivals planned: ${esc(next)}.</p>
+  <label class="row">Port <select data-cv="port">${ports.map((p) => `<option value="${p.id}" ${draft.port === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+  <label class="row">Lane <select data-cv="route">${lanes.map((l) => `<option ${draft.route === l ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+  <label class="row">Supply units (max 3) <input type="number" min="0" max="${Math.min(3, box)}" data-cv="n" value="${draft.n}"></label>
+  <p class="help">Bombing of the lane may sink part of the convoy [32.6]. Set units to 0 to hold the convoy back.</p>`;
 }
 
 function declareForm() {
@@ -317,7 +323,7 @@ function unitCard(u) {
   const moved = S.game.seg?.moved?.includes(u.id);
   return `<div class="unitcard"><b>${esc(u.name)}</b><br>
     CPA ${u.cpa} · used ${fmtCP(u.cpUsed)}${u.cpa <= 10 ? ` (foot: max ${u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT})` : ''} · cohesion <b class="${u.cohesion < 0 ? 'bad' : ''}">${u.cohesion}</b><br>
-    Morale ${u.morale > 0 ? '+' : ''}${u.morale} · TOE ${u.str}/${u.maxStr}${u.motorised ? ` · fuel ${u.fuel}` : ''} · water ${u.water} · ammo ${u.ammo}${u.motorised ? ` · breakdown pts ${fmtCP(u.bp)}` : ''}
+    Morale ${u.morale > 0 ? '+' : ''}${u.morale} · TOE ${u.str}/${u.maxStr}${u.fuelNeed ? ` · fuel ${Math.floor(u.fuelAvail)}/${u.fuelNeed}` : ''} · ammo in reach ${Math.floor(u.ammoAvail)}${u.motorised ? ` · breakdown pts ${fmtCP(u.bp)}` : ''}
     <br><span class="muted">${(u.elements || []).map((e) => `${e.toe}× ${esc(e.w)}`).join(' · ')}</span>
     ${frozen ? '<br><span class="bad">Cannot move again this phase.</span>' : moved ? '<br><span class="muted">Already moved this segment.</span>' : ''}</div>`;
 }
@@ -360,27 +366,19 @@ function obligationList() {
 }
 
 function trucksForm() {
-  draft.transfers ||= [];
-  const dumps = Object.entries(S.game.dumps).filter(([, d]) => d.side === mySide() && !d.spotted);
-  const dests = new Map(dumps.map(([k]) => [k, hexLabel(k)]));
-  for (const u of myUnits()) if (!dests.has(key(...u.pos))) dests.set(key(...u.pos), `${u.name} (${key(...u.pos)})`);
-  const load = draft.transfers.reduce((a, t) => a + t.amount * Math.max(1, Math.ceil(distance(parseKey(t.from), parseKey(t.to)) / 8)), 0);
-  const opt = (m) => [...m].map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('');
-  return `<p>Move supplies with second- and third-line trucks. Capacity used: <b>${load}/${S.game.truckCapacity}</b>.</p>
-  <div class="transfer">
-    <select id="tFrom">${opt(new Map(dumps.map(([k]) => [k, hexLabel(k)])))}</select>
-    <span>→</span>
-    <select id="tTo">${opt(dests)}</select>
-    <select id="tRes"><option>fuel</option><option>water</option><option>ammo</option><option>stores</option></select>
-    <input id="tAmt" type="number" min="1" value="10">
-    <button data-add-transfer>Add</button>
-  </div>
-  <ul class="orders">${draft.transfers.map((t, i) => `<li>${t.amount} ${t.res}: ${esc(hexLabel(t.from))} → ${esc(hexLabel(t.to))} <button class="x" data-del-transfer="${i}">✕</button></li>`).join('') || '<li class="muted">No convoys.</li>'}</ul>`;
+  draft.moves ||= [];
+  const mine = (S.game.supply || []).filter((x) => x.own);
+  const sel = mine.find((x) => x.id === selectedSupply);
+  return `<p>Truck Convoy Phase. Click one of your supply units on the map (square markers), then click a destination hex up to 15 CP away. Each move costs 1 Fuel.</p>
+  <p class="help">${sel ? `Selected: supply unit at ${esc(hexLabel(key(...sel.pos)))} (ammo ${sel.ammo}, fuel ${sel.fuel}).` : 'No supply unit selected.'}</p>
+  <ul class="orders">${draft.moves.map((m, i) => `<li>${esc(m.id)} → ${esc(hexLabel(m.to))} <button class="x" data-del-move="${i}">✕</button></li>`).join('') || '<li class="muted">No moves ordered.</li>'}</ul>`;
 }
 
 function wireOrders(el) {
-  el.querySelectorAll('[data-air]').forEach((i) => (i.onchange = () => { draft[i.dataset.air] = Math.max(0, parseInt(i.value, 10) || 0); renderOrders(); }));
-  el.querySelectorAll('[data-convoy]').forEach((s) => (s.onchange = () => { draft.port = s.value || null; }));
+  el.querySelectorAll('[data-cv]').forEach((i) => (i.onchange = () => {
+    const k = i.dataset.cv;
+    draft[k] = k === 'port' ? i.value : Math.max(0, parseInt(i.value, 10) || 0);
+  }));
   el.querySelectorAll('[data-declare]').forEach((b) => (b.onclick = () => send({ type: 'submit', orders: { goFirst: b.dataset.declare === 'first' } })));
   el.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
     if (b.dataset.act === 'endPhase' && !confirm('End your Movement & Combat Phase?')) return;
@@ -398,12 +396,7 @@ function wireOrders(el) {
       probe: el.querySelector(`[data-opt-probe="${id}"]`).checked,
     });
   }));
-  el.querySelector('[data-add-transfer]')?.addEventListener('click', () => {
-    const t = { from: $('tFrom').value, to: $('tTo').value, res: $('tRes').value, amount: parseInt($('tAmt').value, 10) || 0 };
-    if (!t.from || !t.to || t.from === t.to || t.amount <= 0) return toast('Pick two different places and an amount.');
-    draft.transfers.push(t); renderOrders(); drawMap();
-  });
-  el.querySelectorAll('[data-del-transfer]').forEach((b) => (b.onclick = () => { draft.transfers.splice(+b.dataset.delTransfer, 1); renderOrders(); drawMap(); }));
+  el.querySelectorAll('[data-del-move]').forEach((b) => (b.onclick = () => { draft.moves.splice(+b.dataset.delMove, 1); renderOrders(); drawMap(); }));
 }
 
 // ---------- Supply / formations ----------
@@ -411,15 +404,18 @@ function wireOrders(el) {
 function renderSupply() {
   const el = $('tab-supply');
   if (!mySide()) { el.innerHTML = ''; return; }
-  const dumps = Object.entries(S.game.dumps).filter(([, d]) => d.side === mySide() && !d.spotted);
+  const g = S.game;
   const n = (v) => Math.floor(v);
-  el.innerHTML = `<h3>Formations</h3><table class="grid"><tr><th>Unit</th><th>CP</th><th>Coh</th><th>Str</th><th>Fuel</th><th>Water</th><th>Ammo</th></tr>
-    ${myUnits().map((u) => `<tr class="${u.cohesion <= -10 || u.water <= 0 ? 'warn' : ''}"><td>${esc(u.name)}</td><td>${fmtCP(u.cpUsed)}/${u.cpa}</td><td>${u.cohesion}</td><td>${u.str}/${u.maxStr}</td><td>${u.motorised ? u.fuel : '–'}</td><td>${u.water}</td><td>${u.ammo}</td></tr>`).join('')}</table>
-    <h3>Supply dumps</h3><table class="grid"><tr><th>Dump</th><th>Fuel</th><th>Water</th><th>Ammo</th><th>Stores</th></tr>
-    ${dumps.map(([k, d]) => `<tr><td>${esc(hexLabel(k))}</td><td>${n(d.fuel)}</td><td>${n(d.water)}</td><td>${n(d.ammo)}</td><td>${n(d.stores)}</td></tr>`).join('')}</table>
-    <p>Prisoners held: <b>${S.game.prisoners?.[mySide()] ?? 0}</b> TOE points.</p>
-    <p class="help">CP = capability points used this Operations Stage / allowance. Spending past the allowance costs cohesion. A stage spent resting restores up to 5 cohesion (never above 0). At −26 a unit can't move or fight.</p>
-    <p class="help">Supply is still placeholder: units within 3 hexes of a dump top up at the end of each Game-Turn${S.game.options?.pastaRule ? '; Italian units need extra water for pasta' : ''}.</p>`;
+  const sup = (g.supply || []).filter((x) => x.own);
+  const v = g.victory;
+  el.innerHTML = `<h3>Formations</h3><table class="grid"><tr><th>Unit</th><th>CP</th><th>Coh</th><th>Str</th><th>Fuel need</th><th>Fuel</th><th>Ammo</th></tr>
+    ${myUnits().map((u) => `<tr class="${u.cohesion <= -10 || (u.fuelNeed > u.fuelAvail) ? 'warn' : ''}"><td>${esc(u.name)}</td><td>${fmtCP(u.cpUsed)}/${u.cpa}</td><td>${u.cohesion}</td><td>${u.str}/${u.maxStr}</td><td>${u.fuelNeed || '–'}</td><td>${n(u.fuelAvail)}</td><td>${n(u.ammoAvail)}</td></tr>`).join('')}</table>
+    <h3>Supply units</h3><table class="grid"><tr><th>Where</th><th>Ammo</th><th>Fuel</th></tr>
+    ${sup.map((x) => `<tr><td>${esc(hexLabel(key(...x.pos)))}</td><td>${n(x.ammo)}</td><td>${n(x.fuel)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None in the field.</td></tr>'}</table>
+    ${mySide() === 'axis' ? `<p>Waiting in Tripoli: <b>${g.box}</b> supply unit${g.box === 1 ? '' : 's'}.</p>` : ''}
+    <p>Prisoners held: <b>${g.prisoners?.[mySide()] ?? 0}</b> TOE points.</p>
+    ${v ? `<p class="help">Victory: ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</p>` : ''}
+    <p class="help">Units draw Fuel (once per Operations Stage) and Ammunition (at combat) from supply units within half their CPA [32.2]. Spending past the allowance costs cohesion. A stage spent resting restores up to 5 cohesion (never above 0). At −26 a unit can't move or fight.</p>`;
 }
 
 // ---------- Lobby / staff ----------
@@ -648,11 +644,11 @@ function drawMap() {
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,250,235,0.85)'; ctx.strokeText(l.name, x, y - s * 0.9);
     ctx.fillStyle = '#1e2a33'; ctx.fillText(l.name, x, y - s * 0.9);
   }
-  // Dumps
-  for (const [k, d] of Object.entries(S.game.dumps)) {
-    const { x, y } = centre(...parseKey(k));
-    ctx.fillStyle = d.side === mySide() ? '#2f5d3a' : '#8c2b1e';
-    ctx.fillRect(x + s * 0.3, y - s * 0.75, s * 0.32, s * 0.32);
+  // Supply units (squares, with a cross if selected)
+  for (const x of S.game.supply || []) {
+    const { x: px, y: py } = centre(...x.pos);
+    ctx.fillStyle = x.side === 'axis' ? '#6b6b4a' : '#7a5a2e'; ctx.strokeStyle = x.id === selectedSupply ? '#d11' : '#111'; ctx.lineWidth = x.id === selectedSupply ? 2.5 : 1;
+    ctx.fillRect(px + s * 0.3, py - s * 0.8, s * 0.38, s * 0.38); ctx.strokeRect(px + s * 0.3, py - s * 0.8, s * 0.38, s * 0.38);
   }
   // Broken-down vehicles
   for (const b of S.game.broken || []) {
@@ -661,9 +657,11 @@ function drawMap() {
     ctx.beginPath(); ctx.arc(x - s * 0.4, y + s * 0.45, s * 0.22, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#222'; ctx.font = `bold ${Math.max(8, s * 0.3)}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText(String(b.n), x - s * 0.4, y + s * 0.55);
   }
-  // Planned truck convoys
-  if (S.game.step === 'trucks') for (const t of draft.transfers || []) {
-    const a = centre(...parseKey(t.from)), b = centre(...parseKey(t.to));
+  // Planned supply moves
+  if (S.game.step === 'trucks') for (const m of draft.moves || []) {
+    const src = (S.game.supply || []).find((x) => x.id === m.id);
+    if (!src) continue;
+    const a = centre(...src.pos), b = centre(...parseKey(m.to));
     ctx.strokeStyle = '#2f5d3a'; ctx.setLineDash([3, 3]); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.setLineDash([]);
   }
   // Units (stacks fan out slightly)
@@ -742,7 +740,7 @@ function showHexInfo([c, r]) {
   const t = TILES[key(c, r)];
   if (!t) { $('hexInfo').textContent = ''; return; }
   const us = unitsAt(c, r);
-  const d = S.game.dumps[key(c, r)];
+  const sup = (S.game.supply || []).filter((x) => key(...x.pos) === key(c, r));
   const port = LOCATIONS.find((l) => l.hexes.some((h) => h[0] === c && h[1] === r));
   const reach = reachCache?.get(key(c, r));
   const terr = TERRAIN[t.t];
@@ -750,13 +748,25 @@ function showHexInfo([c, r]) {
     `<b>${nameOfHex(c, r)}</b> ${esc(terr.label)} <span class="muted">(CP ${terr.np === Infinity ? 'P' : terr.np}/${terr.mp === Infinity ? 'P' : terr.mp}, stack ${terr.stack})</span>`,
     port ? `${esc(port.name)} (${sideName(S.game.portOwners[port.id])}${port.port ? ', port' : ''}${port.city ? ', major city' : ''}${port.victory ? ', victory location' : ''})` : '',
     ...us.map((u) => `${esc(u.name)} · ${u.str} steps${u.side === mySide() ? ` · CP ${fmtCP(u.cpUsed)}/${u.cpa} · coh ${u.cohesion}` : ''}`),
-    d && !d.spotted && d.side === mySide() ? `Dump: fuel ${Math.floor(d.fuel)}, water ${Math.floor(d.water)}, ammo ${Math.floor(d.ammo)}` : d ? 'Enemy dump' : '',
+    ...sup.map((x) => x.own ? `Supply unit: ammo ${Math.floor(x.ammo)}, fuel ${Math.floor(x.fuel)}` : 'Enemy supply unit'),
     reach ? `Move here: ${fmtCP(reach.cost)} CP${reach.stop ? ' · enters enemy ZOC (must stop)' : ''}` : '',
   ].filter(Boolean).join('<br>');
 }
 
 function clickHex([c, r]) {
   if (!S?.game || S.game.over || !mySide()) return;
+  if (S.game.step === 'trucks' && S.canAct) {
+    const k0 = key(c, r);
+    const here = (S.game.supply || []).filter((x) => x.own && key(...x.pos) === k0 && !x.moved && !(draft.moves || []).some((m) => m.id === x.id));
+    if (here.length && (!selectedSupply || !here.some((x) => x.id === selectedSupply))) { selectedSupply = here[0].id; renderOrders(); drawMap(); return; }
+    if (selectedSupply) {
+      draft.moves ||= [];
+      draft.moves.push({ id: selectedSupply, to: k0 });
+      selectedSupply = null; renderOrders(); drawMap();
+      return;
+    }
+    return;
+  }
   const mine = unitsAt(c, r).filter((u) => u.side === mySide());
   const k = key(c, r);
   // Moving the selected unit takes priority if the hex is reachable.

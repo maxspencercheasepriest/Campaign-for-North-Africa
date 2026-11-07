@@ -7,7 +7,6 @@ import { key, distance, neighbours } from '../src/shared/hex.js';
 import { hexFromName, nameOfHex } from '../src/shared/hexnames.js';
 
 const toMoveCombat = (g) => {
-  submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {}); // air
   submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {}); // convoy
   submitOrders(g, g.initiative.holder, { goFirst: true }); // declare
 };
@@ -32,7 +31,7 @@ test('sequence of play: naval stage, declaration, A then B, three ops stages, ne
   const g = createGame();
   assert.equal(g.turn, 1);
   assert.equal(g.initiative.holder, 'axis'); // scenario rule for GT1
-  assert.equal(g.step, 'air');
+  assert.equal(g.step, 'convoy');
   toMoveCombat(g);
   assert.equal(g.opStage, 1);
   assert.equal(g.step, 'movecombat');
@@ -50,7 +49,7 @@ test('sequence of play: naval stage, declaration, A then B, three ops stages, ne
     submitOrders(g, order.B, {});
   }
   assert.equal(g.turn, 2);
-  assert.equal(g.step, 'air');
+  assert.equal(g.step, 'convoy');
   assert.ok(g.initiative.rolls, 'GT2 initiative is rolled');
 });
 
@@ -119,6 +118,8 @@ test('zones of control: stop on entry, no ZOC-to-ZOC, mandatory attack', () => {
   // Put the 7th Armoured two hexes east of Maletti on open ground for a clean test.
   arm.pos = [mal.pos[0] + 2, mal.pos[1]];
   for (const h of [mal.pos, [mal.pos[0] + 1, mal.pos[1]], arm.pos]) gameMap().tiles[key(...h)].t = 'clear';
+  g.supply.units.push({ id: 'T-ax', side: 'axis', pos: [...mal.pos], ammo: 40, fuel: 60 });
+  g.supply.units.push({ id: 'T-cw', side: 'cw', pos: [...arm.pos], ammo: 40, fuel: 60 });
   const between = [mal.pos[0] + 1, mal.pos[1]];
   assert.equal(inEnemyZoc(g, mal, between), true);
   const beyond = [mal.pos[0] + 1, mal.pos[1] + 1];
@@ -142,6 +143,7 @@ test('reaction: a motorised unit may slip away from a slower approaching enemy [
   const inf = g.units.find((x) => x.id === 'it-1cc'); // foot, CPA 10
   const arm = g.units.find((x) => x.id === 'cw-7arm'); // CPA 25
   arm.pos = [inf.pos[0] + 2, inf.pos[1]];
+  g.supply.units.push({ id: 'T-cw', side: 'cw', pos: [...arm.pos], ammo: 40, fuel: 60 });
   for (const h of [inf.pos, [inf.pos[0] + 1, inf.pos[1]], arm.pos, [arm.pos[0] + 1, arm.pos[1]], [arm.pos[0] + 2, arm.pos[1]]]) gameMap().tiles[key(...h)] = { t: 'clear' };
   for (const ek of Object.keys(gameMap().hexsides)) if ([inf.pos, arm.pos].some((h) => ek.includes(key(...h)))) delete gameMap().hexsides[ek];
   assert.equal(act(g, 'axis', { action: 'move', unitId: inf.id, path: [[inf.pos[0] + 1, inf.pos[1]]] }), null);

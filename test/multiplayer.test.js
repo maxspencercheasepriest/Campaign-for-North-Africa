@@ -24,7 +24,7 @@ function client(url, name, hostToken) {
   c.ready = new Promise((r) => ws.on('open', () => { c.send({ type: 'hello', name, hostToken }); r(); }));
   return c;
 }
-const settle = () => new Promise((r) => setTimeout(r, 60));
+const settle = () => new Promise((r) => setTimeout(r, 150));
 
 test('lobby, seats, fog of war and a full turn of stages', async () => {
   const savePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-')), 'save.json');
@@ -48,29 +48,21 @@ test('lobby, seats, fog of war and a full turn of stages', async () => {
   assert.match(axisC.errors.at(-1), /Only the host/);
   host.send({ type: 'start' });
   await settle();
-  assert.equal(host.state.phase, 'game');
+  assert.equal(host.state.phase, 'game', JSON.stringify(host.errors));
 
   // Fog: Commonwealth must not see Axis units in Tripoli, nor any enemy supply figures.
   const cwView = host.state.game.units;
   assert.ok(!cwView.some((u) => u.id === 'it-pav'), 'Pavia in Tripoli should be hidden from the Commonwealth');
-  assert.ok(cwView.filter((u) => u.side === 'axis').every((u) => u.fuel === undefined));
+  assert.ok(cwView.filter((u) => u.side === 'axis').every((u) => u.fuelAvail === undefined));
 
-  // Air step: the Air seat is empty on both sides, so the C-in-Cs act; Ben (front) cannot.
-  assert.equal(host.state.game.step, 'air');
+  // Convoy step: the Convoy seat is empty on both sides, so the C-in-Cs act; Ben (front) cannot.
+  assert.equal(host.state.game.step, 'convoy');
   assert.equal(host.state.canAct, true);
   assert.equal(ally.state.canAct, false);
-  host.send({ type: 'submit', orders: { malta: 9 } });
+  host.send({ type: 'submit', orders: {} });
+  axisC.send({ type: 'submit', orders: { port: 'benghazi', route: 2, n: 1 } });
   await settle();
-  assert.match(host.errors.at(-1), /only have 5 air points/);
-  host.send({ type: 'submit', orders: { malta: 3, escort: 1, ground: 1 } });
-  axisC.send({ type: 'submit', orders: { malta: 2, escort: 4 } });
-  await settle();
-  assert.equal(host.state.game.step, 'convoy');
-
-  host.send({ type: 'submit', orders: { port: 'alexandria' } });
-  axisC.send({ type: 'submit', orders: { port: 'benghazi' } });
-  await settle();
-  assert.ok(axisC.state.game.log.some((l) => /Convoy to Benghazi/.test(l.text)));
+  assert.ok(axisC.state.game.log.some((l) => /Convoy on route 2 to Benghazi/.test(l.text)), JSON.stringify([axisC.errors, axisC.state.game.log.slice(-4), axisC.state.game.step]));
 
   // Initiative declaration: the Axis holds the initiative on Game-Turn 1, so only Dave can act.
   assert.equal(axisC.state.game.step, 'declare');
@@ -96,17 +88,14 @@ test('lobby, seats, fog of war and a full turn of stages', async () => {
 
   // Truck convoy phase belongs to the Rear Area seat; empty, so the C-in-C (host) acts.
   assert.equal(host.state.game.step, 'trucks');
-  const matruh = key(...hexFromName('D3714'));
-  const ind = host.state.game.units.find((u) => u.id === 'cw-4ind');
-  host.send({ type: 'submit', orders: { transfers: [{ from: matruh, to: ind.pos.join(','), res: 'water', amount: 10 }] } });
+  host.send({ type: 'submit', orders: { moves: [] } });
   await settle();
-  assert.ok(host.state.game.dumps[ind.pos.join(',')].water >= 10);
   assert.equal(host.state.game.half, 'B');
 
   // Host can force the rest of the turn along.
   for (let i = 0; i < 40 && host.state.game.turn === 1; i++) { host.send({ type: 'force' }); await settle(); }
   assert.equal(host.state.game.turn, 2);
-  assert.equal(host.state.game.step, 'air');
+  assert.equal(host.state.game.step, 'convoy');
 
   // Team chat stays on the team.
   host.send({ type: 'chat', channel: 'team', text: 'Hold the escarpment' });

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   D66, _raw, CA_ATTACKER_LOSS, CA_DEFENDER_LOSS, BARRAGE, MORALE_TABLE, antiArmourRow, antiArmourDamage,
-  caColumnForDifferential, moraleModifier, orgSizeShift, BREAKDOWN, WEATHER, breakdownColumn,
+  caColumnForDifferential, moraleModifier, orgSizeShift, BREAKDOWN, WEATHER, breakdownColumn, CONVOY_LOSS, convoyBombColumn, CONVOY_BOMB_ROWS,
 } from '../src/shared/tables.js';
 
 function checkPartition(name, rows, ncols) {
@@ -77,4 +77,13 @@ test('weather table rows each cover all 36 results once', () => {
     assert.equal(seen.size, 36, `${season} covers ${seen.size}/36`);
     assert.equal(Object.keys(WEATHER[season]).length, 36);
   }
+});
+
+test('naval convoy bombing table columns each cover all 36 results once', () => {
+  checkPartition('convoy', _raw.CONVOY_ROWS, 11);
+  assert.equal(Object.keys(CONVOY_LOSS[10]).length, 36);
+  assert.equal(convoyBombColumn(20), 0);
+  assert.equal(convoyBombColumn(21), 1);
+  assert.equal(convoyBombColumn(500), 10);
+  assert.equal(CONVOY_BOMB_ROWS[0][0], 66); // Cxx01
 });

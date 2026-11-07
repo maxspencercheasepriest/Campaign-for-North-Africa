@@ -83,7 +83,7 @@ const U = (id, side, nation, name, type, size, cpa, morale, elements, pos, extra
   const u = {
     id, side, nation, name, type, size, cpa, morale, elements,
     motorised: cpa > 10,
-    fuel: cpa > 10 ? 30 : 0, water: 3, ammo: 3,
+    ammo: 0,
     cpUsed: 0, cohesion: 0, bp: 0,
     pos,
     ...extra,
@@ -125,20 +125,20 @@ export const REINFORCEMENTS = [
   { turn: 22, location: 'benghazi', unit: U('de-dak', 'axis', 'de', 'DAK HQ (Rommel)', 'hq', 'battalion', 30, 2, [], null, { rommel: true }) },
 ];
 
-const D = (fuel, water, ammo, stores) => ({ fuel, water, ammo, stores });
-
-// Initial supply dumps (60.34, 60.44). Water is a placeholder (the scenario gives none; wells come later).
-export function initialDumps() {
-  const k = (n) => key(...at(n));
-  return {
-    [k('C4807')]: { side: 'axis', ...D(2000, 500, 200, 500) },
-    [k('C4321')]: { side: 'axis', ...D(1000, 300, 100, 200) },
-    [k('A4827')]: { side: 'axis', ...D(250, 200, 100, 100) },
-    [k('B5925')]: { side: 'axis', ...D(250, 100, 0, 50) },
-    [k('D3714')]: { side: 'cw', ...D(3000, 1000, 1000, 4000) },
-    [k('C4131')]: { side: 'cw', ...D(500, 200, 250, 100) },
-    [k('E3613')]: { side: 'cw', ...D(9999, 9999, 9999, 9999) }, // unlimited at Alexandria
-  };
+// Initial supply units [60.92 B and C: the abstract logistics rules, 32.0]. Each holds up to 40 Ammo and 60 Fuel.
+// The Axis Tripoli box lives off the map: those units must be shipped over by convoy.
+export function initialSupply() {
+  const su = (side, hex, ammo, fuel) => ({ side, pos: at(hex), ammo, fuel });
+  const rep = (n, f) => Array.from({ length: n }, f);
+  const units = [
+    ...rep(3, () => su('axis', 'C4807', 15, 50)), ...rep(2, () => su('axis', 'C4321', 10, 40)),
+    su('axis', 'A4827', 10, 10), su('axis', 'B5925', 0, 10),
+    ...rep(3, () => su('axis', 'C4519', 40, 50)), ...rep(3, () => su('axis', 'C4419', 40, 50)),
+    su('axis', 'C0716', 20, 6),
+    ...rep(5, () => su('cw', 'D3714', 40, 60)), su('cw', 'C4131', 40, 60), ...rep(3, () => su('cw', 'D3612', 40, 30)),
+    ...rep(3, () => su('cw', 'E3613', 40, 60)), ...rep(3, () => su('cw', 'E1830', 40, 60)),
+  ];
+  return { units, box: { axis: rep(8, () => ({ ammo: 5, fuel: 60 })), cw: [] } };
 }
 
 export function initialPortOwners() {
@@ -147,10 +147,4 @@ export function initialPortOwners() {
   return owners;
 }
 
-// ---- Placeholders until the logistics rules (32.0 / 49.0-58.0) are implemented ----
-export const AIR_POINTS = { axis: 6, cw: 5 };
-export const TRUCK_CAPACITY = { axis: 60, cw: 60 };
-export const CONVOY = { axis: D(80, 40, 50, 50), cw: D(70, 60, 50, 50) };
-export const FUEL_EVAPORATION = { axis: 0.03, cw: 0.07 };
-export const SUPPLY_RANGE = 3;
 export const VISION_RANGE = 3;

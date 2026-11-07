@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { SIDES, ROLES } from '../shared/scenario.js';
-import { createGame, submitOrders, unready, act, viewFor, currentStep, actingSides, actingRole, autoDecide, STEPS } from './engine.js';
+import { createGame, submitOrders, unready, act, viewFor, currentStep, actingSides, actingRole, autoDecide, autoOrders, STEPS } from './engine.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(here, '..');
@@ -26,7 +26,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
     try {
       room = { ...room, ...JSON.parse(fs.readFileSync(savePath, 'utf8')) };
       for (const p of room.players) p.connected = false;
-      if (room.game && room.game.version !== 6) {
+      if (room.game && room.game.version !== 7) {
         console.error('Save is from an older rules version; returning to the lobby with seats kept.');
         room.game = null;
         room.phase = 'lobby';
@@ -81,7 +81,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
       if (room.game.decision) autoDecide(room.game);
       else if (step === 'movecombat') act(room.game, s, { action: 'endPhase' });
       else if (step === 'declare') submitOrders(room.game, s, { goFirst: true });
-      else submitOrders(room.game, s, {});
+      else submitOrders(room.game, s, autoOrders(room.game, s));
     }
   }
 
@@ -105,7 +105,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
         msg.actingFor = auth ? auth.name : null;
       } else if (room.game) {
         const v = viewFor(room.game, 'axis');
-        msg.game = { ...v, units: [], dumps: {}, seg: null, obligations: [], myOrders: null, air: null, log: room.game.log.filter((l) => l.side === 'all').slice(-60) };
+        msg.game = { ...v, units: [], supply: [], box: 0, seg: null, obligations: [], myOrders: null, air: null, log: room.game.log.filter((l) => l.side === 'all').slice(-60) };
       }
       ws.send(JSON.stringify(msg));
     }
@@ -189,7 +189,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
               room.game.seg.mode = 'move'; // skip outstanding attack obligations
               act(room.game, s, { action: 'endPhase' });
             } else if (room.game.step === 'declare') submitOrders(room.game, s, { goFirst: true });
-            else submitOrders(room.game, s, {});
+            else submitOrders(room.game, s, autoOrders(room.game, s));
           }
           break;
         }

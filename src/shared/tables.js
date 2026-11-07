@@ -241,4 +241,50 @@ export const WEATHER = Object.fromEntries(Object.entries(WEATHER_ROWS).map(([sea
 // Map sections struck by a sandstorm or rainstorm, by one die. D,E* : sandstorms never cover delta hexes.
 export const FOUL_WEATHER_SECTIONS = { 1: ['A', 'B'], 2: ['C', 'D'], 3: ['D', 'E'], 4: ['B', 'C'], 5: ['B', 'D'], 6: ['B', 'C', 'D'] };
 
-export const _raw = { ATTACKER_LOSS_ROWS, DEFENDER_LOSS_ROWS, BARRAGE_ROWS, MORALE_ROWS, BREAKDOWN_ROWS, WEATHER_ROWS, parseRange };
+
+// ---------- Abstract logistics tables [32.46, 32.47, 56.4, 32.66, 41.5] ----------
+// Axis Simplified Supply Availability Table: supply units arriving, by die (1-6) and tonnage letter A-G.
+export const AXIS_SUPPLY_TABLE = {
+  1: [0, 0, 1, 1, 1, 1, 2], 2: [0, 1, 1, 1, 2, 2, 3], 3: [1, 1, 1, 2, 2, 3, 3],
+  4: [1, 2, 2, 3, 3, 4, 4], 5: [2, 2, 3, 3, 3, 4, 5], 6: [2, 3, 3, 3, 4, 4, 6],
+};
+// Commonwealth table: by die and supply period I, II, III.
+export const CW_SUPPLY_TABLE = { 1: [1, 2, 3], 2: [1, 3, 4], 3: [2, 3, 5], 4: [2, 3, 5], 5: [3, 4, 6], 6: [3, 4, 7] };
+// Axis Naval Convoy Level Chart: letter per month (index 0 = January).
+export const AXIS_CONVOY_LEVEL = {
+  1940: [null, null, null, null, null, null, null, null, 'B', 'B', 'B', 'B'],
+  1941: ['B', 'E', 'F', 'E', 'D', 'G', 'C', 'E', 'C', 'D', 'E', 'A'],
+  1942: ['C', 'B', 'B', 'G', 'F', 'A', 'F', 'B', 'D', 'A', 'G', 'C'],
+};
+// Simple Axis Naval Convoy Bombing Chart: for each convoy route 1-6 the locations (map section + east-west hexrow,
+// given as game rows) at which the Commonwealth gains more bomb points. Rows correspond to the bomb-point
+// columns 21-40, 41-80, 81-120, 121-160, 161-200, 201-260, 261-320, 321-390, 391-470, 471+.
+const loc = (s) => (s ? 33 * 'ABCDE'.indexOf(s[0]) + parseInt(s.slice(1), 10) - 1 : null);
+export const CONVOY_BOMB_ROWS = [
+  ['C01', 'D01', 'D01', 'E01', 'E11', 'D11'], ['B16', 'C16', 'C21', 'D21', 'E01', 'D01'],
+  ['B01', 'C01', 'C11', 'D11', 'D21', 'C21'], ['A18', 'B16', 'C01', 'D01', 'D11', 'C11'],
+  [null, 'B01', 'B26', 'C21', 'D01', 'C01'], [null, 'A18', 'B20', 'C11', 'C21', 'B26'],
+  [null, null, 'B10', 'C01', 'C11', 'B20'], [null, null, 'B01', 'B26', 'C01', 'B10'],
+  [null, null, 'A18', 'B20', 'B26', 'B01'], [null, null, null, 'B10', 'B20', 'A18'],
+].map((row) => row.map(loc));
+// Bomb points -> column of the Air Bombardment table (1-20 is column 0).
+export function convoyBombColumn(points) {
+  const edges = [20, 40, 80, 120, 160, 200, 260, 320, 390, 470];
+  const i = edges.findIndex((e) => points <= e);
+  return i < 0 ? 10 : i;
+}
+// Air Bombardment and Secondary Barrage Targets Table, "Axis Naval Convoy" rows: percentage destroyed.
+const CONVOY_ROWS = [
+  [0, ['11-66', '11-54', '11-33', '11-22', '-', '-', '-', '-', '-', '-', '-']],
+  [5, ['-', '55-64', '34-64', '23-54', '11-45', '11-32', '11-21', '11-14', '-', '-', '-']],
+  [10, ['-', '65-66', '65-66', '55-64', '46-63', '33-56', '22-51', '15-42', '11-23', '11-15', '-']],
+  [20, ['-', '-', '-', '65-66', '64-66', '61-66', '52-63', '43-56', '24-51', '16-34', '11-24']],
+  [25, ['-', '-', '-', '-', '-', '-', '64-66', '61-66', '52-63', '35-52', '25-36']],
+  [30, ['-', '-', '-', '-', '-', '-', '-', '-', '64-66', '53-63', '41-54']],
+  [40, ['-', '-', '-', '-', '-', '-', '-', '-', '-', '64-66', '55-63']],
+  [50, ['-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '64-66']],
+];
+export const CONVOY_LOSS = Array.from({ length: 11 }, () => ({}));
+CONVOY_ROWS.forEach(([pct, cells]) => cells.forEach((cell, c) => { for (const v of parseRange(cell)) CONVOY_LOSS[c][v] = pct; }));
+
+export const _raw = { ATTACKER_LOSS_ROWS, DEFENDER_LOSS_ROWS, BARRAGE_ROWS, MORALE_ROWS, BREAKDOWN_ROWS, WEATHER_ROWS, CONVOY_ROWS, parseRange };
