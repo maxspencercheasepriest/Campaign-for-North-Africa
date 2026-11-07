@@ -91,3 +91,13 @@ details.report summary { font-weight: bold; cursor: pointer; }
 details.report p { margin: 4px 0; }
 
 button.sel { background: var(--blue); }
+
+.coach { position: absolute; left: 10px; top: 10px; width: 340px; max-height: 70%; overflow: auto; background: var(--paper); border: 2px solid var(--khaki); box-shadow: 0 6px 24px #0008; padding: 10px 12px; font-size: 13px; }
+.coach h4 { margin: 0 0 6px; font-family: Georgia, serif; text-transform: uppercase; letter-spacing: 1px; border-bottom: 2px solid var(--ink); display: flex; justify-content: space-between; align-items: center; }
+.coach p { margin: 6px 0; line-height: 1.35; }
+.coach .ctabs { display: flex; gap: 4px; margin-bottom: 6px; }
+.coach .ctabs button { flex: 1; background: #d8c9a4; color: var(--ink); padding: 4px; font-size: 11px; text-transform: uppercase; }
+.coach .ctabs button.active { background: var(--khaki); color: var(--paper); }
+.coach .cnav { display: flex; gap: 6px; justify-content: space-between; margin-top: 8px; align-items: center; }
+.coach .cnav button { padding: 3px 10px; }
+.coach button.x { padding: 0 6px; }

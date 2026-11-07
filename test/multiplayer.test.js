@@ -113,7 +113,7 @@ test('lobby, seats, fog of war and a full turn of stages', async () => {
 
 test('static client files are served', async () => {
   const srv = await startServer({ port: 0 });
-  for (const p of ['/', '/client.js', '/style.css', '/shared/hex.js', '/shared/scenario.js']) {
+  for (const p of ['/', '/client.js', '/style.css', '/shared/hex.js', '/shared/scenario.js', '/tutorial.js']) {
     const r = await fetch(srv.url + p);
     assert.equal(r.status, 200, p);
   }

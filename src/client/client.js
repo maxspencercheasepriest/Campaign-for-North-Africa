@@ -5,6 +5,8 @@ import {
 import { hexFromName, nameOfHex } from '/shared/hexnames.js';
 import { TERRAIN, HEXSIDES, STACKING_POINTS, NON_MOTORISED_VOLUNTARY_LIMIT, CP, stepCost, edgeKey, localWeather } from '/shared/rules.js';
 
+import { BASICS, stepHelp } from './tutorial.js';
+
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const store = {
@@ -104,6 +106,7 @@ function render() {
   $('tab-staff').appendChild(seatGrid());
   renderLog();
   renderChat();
+  renderCoach();
   drawMap();
 }
 
@@ -121,6 +124,48 @@ function renderTop() {
   $('readyInfo').innerHTML = `<span class="pill" title="Initiative holder this Game-Turn">Initiative: ${sideName(g.initiative?.holder)}</span> ` +
     (g.acting || []).map((s) => `<span class="pill waiting">waiting on ${sideName(s)}</span>`).join(' ');
 }
+
+// ---------- Optional tutorial ----------
+
+let coachTab = 'step'; // 'step' | 'basics'
+let coachPage = 0;
+const coachState = () => store.get('tutorial') || 'unseen'; // unseen | on | off
+
+function renderCoach() {
+  const el = $('coach'), btn = $('tutorialBtn');
+  const inGame = S?.phase === 'game' && S.game && mySide();
+  btn.classList.toggle('hidden', !inGame);
+  if (!inGame || coachState() === 'off') { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  if (coachState() === 'unseen') {
+    el.innerHTML = `<h4>New to the game?</h4><p>There is an optional guide that explains the turn sequence and tells you what to do at each step as you play.</p>
+      <div class="cnav"><button data-coach="decline">No thanks</button><button data-coach="accept" class="primary" style="width:auto;margin:0">Show me how</button></div>`;
+  } else if (coachTab === 'basics') {
+    const pg = BASICS[coachPage];
+    el.innerHTML = `${coachHead()}<p><b>${esc(pg.title)}</b> (${coachPage + 1}/${BASICS.length})</p>${pg.body.map((t) => `<p>${esc(t)}</p>`).join('')}
+      <div class="cnav"><button data-coach="prev" ${coachPage === 0 ? 'disabled' : ''}>Back</button><button data-coach="next" ${coachPage === BASICS.length - 1 ? 'disabled' : ''}>Next</button></div>`;
+  } else {
+    const h = stepHelp(S.game, { side: mySide(), canAct: S.canAct });
+    el.innerHTML = `${coachHead()}<p><b>${esc(h.title)}</b></p>${h.body.map((t) => `<p>${esc(t)}</p>`).join('')}`;
+  }
+  el.querySelectorAll('[data-coach]').forEach((b) => (b.onclick = () => coachAction(b.dataset.coach)));
+}
+
+function coachHead() {
+  return `<h4>Tutorial <button class="x" data-coach="close" title="Hide the tutorial">✕</button></h4>
+    <div class="ctabs"><button data-coach="step" class="${coachTab === 'step' ? 'active' : ''}">This step</button><button data-coach="basics" class="${coachTab === 'basics' ? 'active' : ''}">How to play</button></div>`;
+}
+
+function coachAction(a) {
+  if (a === 'accept') store.set('tutorial', 'on');
+  else if (a === 'decline' || a === 'close') store.set('tutorial', 'off');
+  else if (a === 'step' || a === 'basics') coachTab = a;
+  else if (a === 'prev') coachPage = Math.max(0, coachPage - 1);
+  else if (a === 'next') coachPage = Math.min(BASICS.length - 1, coachPage + 1);
+  renderCoach();
+}
+
+$('tutorialBtn').onclick = () => { store.set('tutorial', coachState() === 'on' ? 'off' : 'on'); renderCoach(); };
 
 // ---------- Helpers on game state ----------
 
@@ -273,7 +318,7 @@ function convoyForm() {
   const g = S.game;
   if (mySide() === 'cw') {
     const next = (g.plan || []).map((p) => `Game-Turn ${p.turn}: ${p.n}`).join(' · ') || 'none planned';
-    return `<p>Commonwealth supply arrives in Cairo and Alexandria by itself [32.7]. Supply level this period: <b>${g.supplyPeriod ?? '–'}</b>.</p>
+    return `<p>Commonwealth supply arrives in Cairo and Alexandria by itself [32.7]. Supply period: <b>${['I', 'II', 'III'][g.supplyPeriod] ?? '–'}</b>.</p>
     <p class="help">Already scheduled: ${esc(next)}.</p><p class="note">Nothing to order this step.</p>`;
   }
   const ports = PORTS.filter((p) => g.portOwners[p.id] === 'axis');
