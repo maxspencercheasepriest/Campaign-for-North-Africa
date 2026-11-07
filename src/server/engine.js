@@ -359,8 +359,25 @@ function resolveConvoy(g, o) {
   scheduleConvoys(g.supply, { order: o.axis, turn: g.turn, log: (side, text) => log(g, side, text) });
 }
 
+// Reinforcements arrive in the Naval Convoy Arrival Phase of the Operations Stage the schedule names [4.42, 4.43].
+function reinforcementArrivals(g) {
+  for (const r of REINFORCEMENTS.filter((x) => x.turn === g.turn && (x.stage ?? 1) === g.opStage)) {
+    if (g.units.some((u) => u.id === r.unit.id)) continue;
+    const p = LOCATIONS.find((x) => x.id === r.location);
+    if (g.portOwners[p.id] !== r.unit.side) continue;
+    const [pc, pr] = p.hexes[0];
+    const spot = [[pc, pr], ...neighbours(pc, pr)].find((h) =>
+      gameMap().tiles[key(...h)] && gameMap().tiles[key(...h)].t !== 'sea' &&
+      hexSP(unitsAt(g, h)) + (STACKING_POINTS[r.unit.size] ?? 0) <= stackingLimit(gameMap(), h));
+    if (!spot) continue;
+    g.units.push({ ...structuredClone(r.unit), pos: spot });
+    log(g, r.unit.side, `Reinforcements: ${r.unit.name} arrives at ${p.name}.`);
+  }
+}
+
 // Naval Convoy Arrival Phase [III.D]: convoys due in this Operations Stage are bombed and landed.
 function convoyArrivalPhase(g) {
+  reinforcementArrivals(g);
   landConvoys(g.supply, gameMap(), {
     units: g.units, turn: g.turn, stage: g.opStage, rollD66: () => d6(g) * 10 + d6(g), portOwners: g.portOwners,
     log: (side, text) => log(g, side, text),
@@ -843,17 +860,6 @@ function updateOwnership(g) {
 function endGameTurn(g) {
   removeDestroyed(g);
 
-  for (const r of REINFORCEMENTS.filter((x) => x.turn === g.turn + 1)) {
-    const p = LOCATIONS.find((x) => x.id === r.location);
-    if (g.portOwners[p.id] !== r.unit.side) continue;
-    const [pc, pr] = p.hexes[0];
-    const spot = [[pc, pr], ...neighbours(pc, pr)].find((h) =>
-      gameMap().tiles[key(...h)] && gameMap().tiles[key(...h)].t !== 'sea' &&
-      hexSP(unitsAt(g, h)) + (STACKING_POINTS[r.unit.size] ?? 0) <= stackingLimit(gameMap(), h));
-    if (!spot) continue;
-    g.units.push({ ...structuredClone(r.unit), pos: spot });
-    log(g, r.unit.side, `Reinforcements: ${r.unit.name} arrives at ${p.name}.`);
-  }
 
 }
 

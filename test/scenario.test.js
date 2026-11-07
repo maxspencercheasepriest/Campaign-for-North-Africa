@@ -79,3 +79,12 @@ test('convoy orders are validated: one per lane, at most 3 each, lanes limited e
   assert.match(bad([{ port: 'benghazi', route: 2, n: 1, stage: 4 }]), /Stage 1, 2 or 3/);
   assert.match(bad([{ port: 'matruh', route: 2, n: 1 }]), /not in your hands/);
 });
+
+test('reinforcements arrive in the Arrival Phase of the stage the schedule names [4.42]', () => {
+  const g = createGame({ scenario: 'italian', seed: 1 });
+  g.turn = 20; g.opStage = 1;
+  g.portOwners.benghazi = 'axis';
+  const before = g.units.length;
+  submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
+  assert.equal(g.units.length, before, 'not yet: Rommel is due in stage 2');
+});

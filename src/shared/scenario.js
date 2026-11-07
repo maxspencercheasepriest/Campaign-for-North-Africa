@@ -137,10 +137,12 @@ export function initialUnits() {
   ];
 }
 
+// Reinforcements [4.43]. Only Rommel's DAK HQ (GT20 stage 2, 'Gm: Rommel [DAK]') is dated from the schedule; the other two
+// are placeholders that do not match it (the real schedule is piecemeal and battalion-level) and need replacing.
 export const REINFORCEMENTS = [
   { turn: 13, location: 'alexandria', unit: U('cw-6aus', 'cw', 'au', '6th Australian Div', 'inf', 'division', 10, 1, [E('CW inf (k)', 63), E('25-pounder Gun', 12), E('2-pounder AT', 4)], null) },
   { turn: 22, location: 'benghazi', unit: U('de-5l', 'axis', 'de', '5th Light Div', 'arm', 'division', 25, 2, [E('PzKw II', 6), E('PzKw III', 6), E('DE inf', 20)], null) },
-  { turn: 22, location: 'benghazi', unit: U('de-dak', 'axis', 'de', 'DAK HQ (Rommel)', 'hq', 'battalion', 30, 2, [], null, { rommel: true }) },
+  { turn: 20, stage: 2, location: 'benghazi', unit: U('de-dak', 'axis', 'de', 'DAK HQ (Rommel)', 'hq', 'battalion', 30, 2, [], null, { rommel: true }) },
 ];
 
 // Initial supply units [60.92 B and C: the abstract logistics rules, 32.0]. Each holds up to 40 Ammo and 60 Fuel.
