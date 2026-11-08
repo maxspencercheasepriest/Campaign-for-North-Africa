@@ -531,3 +531,34 @@ test('port points: holding a captured port earns points and every 10 bring a rei
   assert.equal(viewFor(off, 'cw').portRewards, null);
   void before;
 });
+
+test('rail movement: Commonwealth only, once per stage, along working rail', async () => {
+  const { gameMap, act } = await import('../src/server/engine.js');
+  const g = createGame({ seed: 9, air: 'off' });
+  submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
+  submitOrders(g, g.initiative.holder, { goFirst: true });
+  const rails = [...gameMap().rails];
+  const onRail = (pos) => rails.some((e) => e.split('|').includes(`${pos[0]},${pos[1]}`));
+  // Put a CW unit on a rail hex that has a long way to run.
+  const u = g.units.find((x) => x.side === 'cw' && x.type !== 'hq' && x.str > 0);
+  const start = rails.flatMap((e) => e.split('|'))[0].split(',').map(Number);
+  u.pos = start; u.cpUsed = 0;
+  for (const e of g.units.filter((x) => x.side === 'axis')) e.pos = [0, 0];
+  assert.equal(g.step, 'movecombat');
+  const { phasingSide } = await import('../src/server/engine.js');
+  if (phasingSide(g) !== 'cw') {
+    assert.equal(act(g, 'axis', { action: 'endPhase' }), null);
+    for (let i = 0; i < 4 && g.step !== 'movecombat'; i++) { submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {}); }
+    u.pos = start;
+  }
+  assert.equal(phasingSide(g), 'cw');
+  assert.ok(onRail(u.pos));
+  const v = viewFor(g, 'cw');
+  const dests = v.rail?.reach?.[`${start[0]},${start[1]}`];
+  assert.ok(dests && dests.length, 'rail destinations offered');
+  const to = dests[dests.length - 1].split(',').map(Number);
+  assert.match(act(g, 'axis', { action: 'rail', unitIds: [u.id], to }) || '', /Phase|Commonwealth/);
+  assert.equal(act(g, 'cw', { action: 'rail', unitIds: [u.id], to }), null);
+  assert.deepEqual(u.pos, to);
+  assert.match(act(g, 'cw', { action: 'rail', unitIds: [u.id], to: dests[0].split(',').map(Number) }), /once per Operations Stage|before any other/);
+});

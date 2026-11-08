@@ -13,6 +13,7 @@
 // STILL PLACEHOLDER: supply/air/convoys (32 / 33-58), truck breakdown, facility repair, and more.
 
 import { REINFORCEMENTS } from '../shared/reinforcements.js';
+import { nameOfHex } from '../shared/hexnames.js';
 import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
 import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, repairPorts, portEff, portMax, newDamage, repairDamage, fortLevel, fortBase } from './air.js';
@@ -390,6 +391,14 @@ function supplyCtx(g, side) {
   };
 }
 
+function railView(g, side) {
+  const starts = new Map();
+  for (const x of [...g.units.filter((u) => u.side === side && u.str > 0 && !u.cpUsed), ...g.supply.units.filter((u) => u.side === side)]) starts.set(key(...x.pos), x.pos);
+  const reach = {};
+  for (const [k, pos] of starts) { const r = railReach(g, side, pos); if (r.size && mapFor(g).rails && [...mapFor(g).rails].some((e) => e.split('|').includes(k))) reach[k] = [...r]; }
+  return { reach };
+}
+
 function damageView(g) {
   const d = g.damage || newDamage();
   const ports = LOCATIONS.filter((l) => l.port && portEff(g, l.id) < portMax(l.id)).map((l) => ({ id: l.id, name: l.name, hex: l.hexes[0], eff: portEff(g, l.id), max: portMax(l.id) }));
@@ -557,6 +566,7 @@ export function act(g, side, a) {
   if (g.step !== 'movecombat' || phasingSide(g) !== side) return 'It is not your Movement & Combat Phase.';
   switch (a?.action) {
     case 'move': return actMove(g, side, a);
+    case 'rail': return actRail(g, side, a);
     case 'reserve': return actReserve(g, side, a);
     case 'release': return actRelease(g, side, a);
     case 'toCombat':
@@ -602,6 +612,47 @@ export function planMove(g, u, path, { reaction = false } = {}) {
     cur = step;
   }
   return { cp, bp, sandCp };
+}
+
+// ---------- Commonwealth rail movement [8.7] ----------
+// Once per Operations Stage the Commonwealth moves one stack of units and/or supply units any distance along the working railway.
+export const railReady = (g, side) => side === 'cw' && g.step === 'movecombat' && g.seg?.mode === 'move' && g.seg.n === 1 && !g.seg.moved.length && g.railUsed !== `${g.turn}.${g.opStage}`;
+function railReach(g, side, from) {
+  const map = mapFor(g), seen = new Set([key(...from)]), queue = [from];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const n of neighbours(...cur)) {
+      const k = key(...n);
+      if (seen.has(k) || !map.rails?.has(edgeKey(cur, n))) continue;
+      if (g.units.some((e) => e.side !== side && e.pos[0] === n[0] && e.pos[1] === n[1])) continue; // [8.73]
+      if (inEnemyZoc(g, { side }, n)) continue;
+      seen.add(k); queue.push(n);
+    }
+  }
+  seen.delete(key(...from));
+  return seen;
+}
+function actRail(g, side, a) {
+  if (!railReady(g, side)) return side !== 'cw' ? 'Only the Commonwealth may use the railway [8.71].' : 'Rail movement is once per Operations Stage, before any other movement [8.72].';
+  const units = (a.unitIds || []).map((id) => g.units.find((x) => x.id === id && x.side === side));
+  const sups = (a.supplyIds || []).map((id) => g.supply.units.find((x) => x.id === id && x.side === side));
+  if (units.some((u) => !u) || sups.some((x) => !x) || !(units.length + sups.length)) return 'Choose units or supply units of yours.';
+  const from = (units[0] || sups[0]).pos;
+  if ([...units, ...sups].some((x) => x.pos[0] !== from[0] || x.pos[1] !== from[1])) return 'Rail movement carries one stack: everything must start in the same hex [8.72].';
+  for (const u of units) {
+    if (u.cpUsed || collapsed(u)) return `${u.name} has spent movement points or is too disorganised for rail movement [8.73].`;
+    if (inEnemyZoc(g, u, u.pos)) return `${u.name} is in an enemy zone of control [8.73].`;
+  }
+  if (!Array.isArray(a.to)) return 'Choose where the train stops.';
+  const reach = railReach(g, side, from);
+  if (!reach.has(key(...a.to))) return 'The railway does not run there, or it is blocked by the enemy or a destroyed section [8.73].';
+  const stackAfter = hexSP(unitsAt(g, a.to)) + hexSP(units);
+  if (stackAfter > stackingLimit(gameMap(), a.to)) return `Stacking limit exceeded at ${key(...a.to)}.`;
+  for (const u of units) { u.pos = [...a.to]; g.seg.moved.push(u.id); }
+  for (const x of sups) x.pos = [...a.to];
+  g.railUsed = `${g.turn}.${g.opStage}`;
+  log(g, side, `Commonwealth rail movement: ${[...units.map((u) => u.name), ...sups.map(() => 'a supply unit')].join(', ')} to ${nameOfHex(...a.to)}.`);
+  return null;
 }
 
 function actMove(g, side, a) {
@@ -1114,6 +1165,7 @@ function buildView(g, side) {
     box: side === 'axis' ? g.supply.box.axis.length : 0,
     plan: g.supply.plan.filter((p) => p.side === side).map(({ turn, n }) => ({ turn, n })),
     atSea: side === 'axis' ? (g.supply.convoys || []).map((c) => ({ turn: c.turn, stage: c.stage, port: c.port, route: c.route, n: c.units.length })) : [],
+    rail: railReady(g, side) && phasingSide(g) === side ? railView(g, side) : null,
     victory: victoryStatus(g),
     portRewards: g.options.portRewards === 'off' ? null : { points: g.portPoints?.[side] ?? 0, next: ((g.portClaims?.[side] ?? 0) + 1) * PORT_BATCH, foe: g.portPoints?.[side === 'axis' ? 'cw' : 'axis'] ?? 0 },
     convoyLevel: side === 'axis' ? axisConvoyLevel(g.turn) : null,

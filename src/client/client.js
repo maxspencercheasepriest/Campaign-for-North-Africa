@@ -26,6 +26,7 @@ let S = null; // last state from server
 let draft = {}; // orders being built for the current stage
 let draftStageKey = null;
 let selected = null;
+let railMode = false;
 let selectedSupply = null; // selected own unit id
 let hoverHex = null;
 
@@ -368,6 +369,8 @@ function moveCombatPanel() {
     if (seg.n === 1 && !seg.moved.length && sel && isCombat(sel)) {
       html += `<div class="btnrow"><button data-reserve="${sel.id}" data-off="${sel.reserve ? 1 : 0}">${sel.reserve ? 'Take out of Reserve' : 'Place in Reserve'}</button></div><p class="help">Reserve Designation Phase [18]: do this before anything moves. Units in Reserve I may move one hex; the rest of the Phase they may be released after combat.</p>`;
     }
+    const rk = sel && key(...sel.pos);
+    if (g.rail?.reach?.[rk]) html += `<div class="btnrow"><button id="railBtn">${railMode ? 'Cancel rail move' : 'Move this stack by rail'}</button></div><p class="help">The railway carries one stack (units and supply together) any distance, once per Operations Stage, before anything else moves [8.7]. Click the hex where the train stops.</p>`;
     const inRes = myUnits().filter((u) => u.reserve);
     if (inRes.length) html += `<p class="help">In Reserve: ${inRes.map((u) => `${esc(u.name)} (${u.reserve === 1 ? 'I' : 'II'})`).join(', ')}.</p>`;
     html += `<div class="btnrow"><button class="act" data-act="toCombat">Finish moving → combat</button></div>`;
@@ -500,6 +503,7 @@ function wireOrders(el) {
     selected = null;
     send({ type: 'action', action: b.dataset.act });
   }));
+  if ($('railBtn')) $('railBtn').onclick = () => { railMode = !railMode; renderOrders(); drawMap(); };
   el.querySelectorAll('[data-reserve]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'reserve', unitIds: [b.dataset.reserve], off: b.dataset.off === '1' })));
   el.querySelectorAll('[data-release]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'release', unitIds: [b.dataset.release] })));
   el.querySelectorAll('[data-attack]').forEach((b) => (b.onclick = () => {
@@ -907,7 +911,17 @@ function drawMap() {
 }
 
 // Flight paths from the last Land Support Air Phase, plus the missions being planned now.
+function drawRailReach() {
+  if (!railMode || !selected) return;
+  const su = myUnits().find((u) => u.id === selected); if (!su) return;
+  const dests = S.game.rail?.reach?.[key(...su.pos)] || [];
+  const s = view.size;
+  ctx.fillStyle = 'rgba(47,127,191,0.35)';
+  for (const k of dests) { const p = centre(...parseKey(k)); ctx.beginPath(); ctx.arc(p.x, p.y, s * 0.6, 0, Math.PI * 2); ctx.fill(); }
+}
+
 function drawDamage() {
+  drawRailReach();
   const dm = S.game.damage; if (!dm) return;
   const s = view.size;
   const cross = (k, col) => {
@@ -1071,6 +1085,19 @@ function clickHex([c, r]) {
   }
   const mine = unitsAt(c, r).filter((u) => u.side === mySide());
   const k = key(c, r);
+  if (railMode && selected) {
+    const su = myUnits().find((u) => u.id === selected);
+    const from = su && key(...su.pos);
+    if (su && S.game.rail?.reach?.[from]?.includes(k)) {
+      const unitIds = myUnits().filter((u) => key(...u.pos) === from && !u.cpUsed).map((u) => u.id);
+      const supplyIds = (S.game.supply || []).filter((x) => x.own && key(...x.pos) === from).map((x) => x.id);
+      railMode = false;
+      send({ type: 'action', action: 'rail', unitIds, supplyIds, to: [c, r] });
+      return;
+    }
+    toast('The train cannot stop there.');
+    return;
+  }
   // Moving the selected unit takes priority if the hex is reachable.
   if (selected && reachCache?.has(k) && k !== key(...myUnits().find((u) => u.id === selected).pos)) {
     const path = pathTo(reachCache, k);
