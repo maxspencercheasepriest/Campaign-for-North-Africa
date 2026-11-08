@@ -221,3 +221,15 @@ test('air game stage 2: option off keeps the old sequence', () => {
   submitOrders(g, g.initiative.holder, { goFirst: true });
   assert.equal(g.step, 'movecombat');
 });
+
+test('starting troops option: strong brings the first 12 turns of reinforcements in at the start', () => {
+  const count = (o) => { const g = createGame({ seed: 1, ...o }); return g.units.length; };
+  const hist = createGame({ seed: 1 });
+  const strong = createGame({ seed: 1, troops: 'strong' });
+  submitOrders(hist, 'axis', {}); submitOrders(hist, 'cw', {});
+  submitOrders(strong, 'axis', {}); submitOrders(strong, 'cw', {});
+  assert.ok(strong.units.length > hist.units.length + 5, 'many more formations on the map');
+  assert.ok(strong.units.some((u) => u.id === 'cw-1fa'));
+  assert.ok(!hist.units.some((u) => u.id === 'cw-1fa'));
+  void count;
+});

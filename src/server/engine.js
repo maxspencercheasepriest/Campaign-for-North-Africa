@@ -384,13 +384,16 @@ function resolveConvoy(g, o) {
 
 // Reinforcements arrive in the Naval Convoy Arrival Phase of the Operations Stage the schedule names [4.42, 4.43].
 // Option `reinforce`: 'historical' (the book's dates), 'early' (two Game-Turns sooner), 'none'.
-const reinfTurn = (g, r) => r.turn - (g.options.reinforce === 'early' ? 2 : 0);
+const reinfTurn = (g, r) => (isStrong(g, r) ? scenarioOf(g).firstTurn : r.turn - (g.options.reinforce === 'early' ? 2 : 0));
+// Option `troops: 'strong'`: everything due in the first 12 Game-Turns is already on the map at the start (in Cairo and at El Agheila).
+const isStrong = (g, r) => g.options.troops === 'strong' && r.turn < scenarioOf(g).firstTurn + 12;
+const reinfStage = (g, r) => (isStrong(g, r) ? 1 : r.stage ?? 1);
 function reinforcementArrivals(g) {
   if (g.options.reinforce === 'none') return;
   g.arrived ||= [];
   const now = g.turn * 4 + g.opStage;
   // Due now, or held over from an earlier stage because the port was lost or the hexes were full.
-  for (const r of REINFORCEMENTS.filter((x) => reinfTurn(g, x) * 4 + (x.stage ?? 1) <= now && !g.arrived.includes(x.unit.id))) {
+  for (const r of REINFORCEMENTS.filter((x) => reinfTurn(g, x) * 4 + reinfStage(g, x) <= now && !g.arrived.includes(x.unit.id))) {
     if (r.unit.rommel && g.turn > reinfTurn(g, r) + 3) { g.arrived.push(r.unit.id); continue; }
     const p = LOCATIONS.find((x) => x.id === r.location);
     if (g.portOwners[p.id] !== r.unit.side) continue;
