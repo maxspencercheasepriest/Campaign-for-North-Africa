@@ -101,6 +101,7 @@ function render() {
   const sk = `${g.turn}:${g.opStage}:${g.step}:${g.half}`;
   if (sk !== draftStageKey) { draftStageKey = sk; draft = g.myOrders ? structuredClone(g.myOrders) : {}; }
   if (selected && !myUnits().some((u) => u.id === selected)) selected = null;
+  if (g.lastAir && g.lastAir.n !== airSeen) { const first = airSeen === null; airSeen = g.lastAir.n; if (!first) startAirAnim(); }
   renderOrders();
   renderSupply();
   renderAir();
@@ -533,7 +534,33 @@ function renderSupply() {
 }
 
 // ---------- Air tab (Air Game, stage 1: forces and bases) ----------
+let airSeen = null; // number of the last air phase the map has shown
+let airAnim = null;
+const AIR_VERB = { capO: 'offensive patrol', capD: 'defensive patrol', strafe: 'strafing', bCU: 'bombing troops', bSD: 'bombing a supply dump', bAF: 'bombing an air facility' };
+function startAirAnim() {
+  airAnim = { start: performance.now(), dur: 3600 };
+  const tick = () => {
+    if (!airAnim) return;
+    drawMap();
+    if (performance.now() - airAnim.start < airAnim.dur) requestAnimationFrame(tick); else { airAnim = null; drawMap(); }
+  };
+  requestAnimationFrame(tick);
+}
 const KIND_LABEL = { fighter: 'Fighters', bomber: 'Bombers', recon: 'Recon', transport: 'Transports', flyingboat: 'Flying boats' };
+function lastAirReport() {
+  const la = S.game.lastAir;
+  if (!la) return '';
+  const me = mySide();
+  const rows = la.flights.map((f) => {
+    const mine = f.side === me;
+    const where = esc(nameOfHex(...f.to));
+    const what = AIR_VERB[f.kind] || f.kind;
+    const out = f.failed ? esc(f.result) : `${f.sent} plane${f.sent === 1 ? '' : 's'}${f.lost ? `, ${f.lost} lost` : ''}${f.result ? `: ${esc(f.result)}` : ''}`;
+    return `<tr class="${mine ? '' : 'warn'}"><td>${mine ? esc(f.name) : 'Enemy'}</td><td>${f.scrambled ? 'scrambled to ' : ''}${what}</td><td>${where}</td><td>${out}</td></tr>`;
+  }).join('');
+  return `<h3>Last air phase <span class="muted">(Game-Turn ${la.turn}, Operations Stage ${la.stage})</span></h3>${rows ? `<table class="grid"><tr><th>Flight</th><th>Mission</th><th>Over</th><th>Result</th></tr>${rows}</table>` : '<p class="muted">No missions were flown.</p>'}`;
+}
+
 function renderAir() {
   const el = $('tab-air');
   if (!mySide() || !S.game?.air) { el.innerHTML = ''; return; }
@@ -547,7 +574,8 @@ function renderAir() {
     ${a.squadrons.map((s) => `<tr><td>${esc(s.name)}</td><td>${KIND_LABEL[s.kind] || s.kind}</td><td>${esc(fname(s.facility))}</td><td>${s.total}</td><td>${s.ready}</td><td>${s.pilots.length ? s.pilots.join(', ') : '–'}</td></tr>`).join('')}</table>
     <h3>Air facilities</h3><table class="grid"><tr><th>Facility</th><th>Type</th><th>Squadrons</th><th>Hex</th></tr>
     ${a.facilities.map((f) => `<tr class="${f.own ? '' : 'warn'}"><td>${esc(f.name)}${f.own ? '' : ' (enemy)'}</td><td>${esc(AIR_FACILITY_NAMES[f.kind])}</td><td>${f.own ? `${f.used}/${f.cap}` : '–'}</td><td>${f.off ? 'off-map' : esc(f.hex)}</td></tr>`).join('')}</table>
-    <p class="help">Air Game, stage 1: your air forces and bases as the 1940 scenario sets them out [60.32, 60.42, 60.5]. Squadrons are 12 Italian planes (9 ready, 3 in reserve) or 20 Commonwealth planes (15 + 5) [35.23]. Flying missions, air combat and bombing are not built yet.</p>`;
+    ${lastAirReport()}
+    <p class="help">Squadrons are 12 Italian planes (9 ready, 3 in reserve) or 20 Commonwealth planes (15 + 5) [35.23]. Fighter and bomber missions are given in the Orders tab during the Land Support Air Phase; flights are drawn on the map afterwards. Flak, recon and convoy bombing are not built yet.</p>`;
 }
 
 // ---------- Lobby / staff ----------
@@ -820,6 +848,50 @@ function drawMap() {
   const stacks = new Map();
   for (const u of S.game.units) { const k = key(...u.pos); if (!stacks.has(k)) stacks.set(k, []); stacks.get(k).push(u); }
   for (const list of stacks.values()) list.forEach((u, i) => drawCounter(u, i, list.length));
+  drawAirOverlay();
+}
+
+// Flight paths from the last Land Support Air Phase, plus the missions being planned now.
+function drawAirOverlay() {
+  const s = view.size;
+  const t = airAnim ? Math.min(1, (performance.now() - airAnim.start) / (airAnim.dur * 0.7)) : 1;
+  const colour = (f) => (f.failed ? '#777' : f.side === 'axis' ? '#4a4a2a' : '#8a4b16');
+  const plane = (x, y, ang, col) => {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(ang); ctx.fillStyle = col; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(s * 0.45, 0); ctx.lineTo(-s * 0.3, s * 0.3); ctx.lineTo(-s * 0.15, 0); ctx.lineTo(-s * 0.3, -s * 0.3); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+  };
+  const la = S.game.lastAir;
+  for (const f of la?.flights || []) {
+    const to = centre(...f.to);
+    const col = colour(f);
+    if (f.from) {
+      const from = centre(...f.from);
+      ctx.strokeStyle = col; ctx.globalAlpha = 0.75; ctx.lineWidth = 2; ctx.setLineDash(f.failed ? [2, 5] : [7, 5]);
+      ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+      if (!f.failed && t < 1) plane(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, Math.atan2(to.y - from.y, to.x - from.x), col);
+    } else if (t < 1) {
+      ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(to.x, to.y, s * (0.4 + t), 0, Math.PI * 2); ctx.stroke(); // enemy raid: only the target shows
+    }
+    if (t >= 1 || !f.from) {
+      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(to.x + s * 0.55, to.y - s * 0.55, s * 0.36, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.max(8, s * 0.34)}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillText(f.failed ? '×' : String(f.sent), to.x + s * 0.55, to.y - s * 0.43);
+      if (f.lost) { ctx.fillStyle = '#c11'; ctx.font = `bold ${Math.max(8, s * 0.3)}px sans-serif`; ctx.fillText(`−${f.lost}`, to.x + s * 0.55, to.y - s * 0.95); }
+    }
+  }
+  // Missions being planned in the Land Support Air Phase
+  if (S.game.step === 'air' && S.canAct) {
+    const a = S.game.air;
+    for (const m of draft.missions || []) {
+      const sq = a.squadrons.find((q) => q.id === m.sq);
+      const fac = sq && a.facilities.find((x) => x.id === sq.facility);
+      const hex = m.hex && hexFromName(m.hex);
+      if (!fac?.hex || !hex) continue;
+      const from = centre(...hexFromName(fac.hex)), to = centre(...hex);
+      ctx.strokeStyle = '#1c3d8c'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke(); ctx.setLineDash([]);
+      plane(to.x, to.y, Math.atan2(to.y - from.y, to.x - from.x), '#1c3d8c');
+    }
+  }
 }
 
 function drawCounter(u, i, n) {

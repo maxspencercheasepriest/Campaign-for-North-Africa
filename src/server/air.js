@@ -285,6 +285,7 @@ export function resolveAir(g, orders, ctx) {
   const say = (text) => ctx.log('all', text);
   // 1. Deploy flights.
   const flights = []; // { sq, side, kind, hex, planes:[{sq,p,side}] }
+  const grounded = [];
   const standby = [];
   for (const side of ['axis', 'cw']) {
     for (const m of orders[side]?.missions || []) {
@@ -293,9 +294,13 @@ export function resolveAir(g, orders, ctx) {
       if (m.kind === 'scramble') { standby.push(sq); continue; }
       const target = hexFromName(m.hex);
       const fl = eligiblePlanes(sq, m.kind, target, ctx);
-      if (!fl) { ctx.log(side, `${sq.name} could not fly its mission (no ready, fuelled planes in range, bad weather, or enemy troops beside the base).`); continue; }
+      if (!fl) {
+        const fac0 = air.facilities.find((f) => f.id === sq.facility);
+        grounded.push({ side, name: sq.name, kind: m.kind, from: fac0 && facilityHex(fac0), to: target, sent: 0, lost: 0, failed: true, result: 'could not take off: no ready, fuelled planes in range, bad weather, or enemy troops beside the base' });
+        ctx.log(side, `${sq.name} could not fly its mission (no ready, fuelled planes in range, bad weather, or enemy troops beside the base).`); continue;
+      }
       const bonus = isBombMission(m.kind) ? (fl.planes.length >= 18 ? 2 : fl.planes.length >= 6 ? 1 : 0) : 0; // bomber formation bonus [45.7]
-      flights.push({ sq, side, kind: m.kind, hex: target, planes: fl.planes.map((p) => ({ sq, p, side, bonus })) });
+      flights.push({ sq, side, kind: m.kind, hex: target, from: fl.base, planes: fl.planes.map((p) => ({ sq, p, side, bonus })) });
     }
   }
   // 2. Scramble: a standby squadron sees the nearest incoming enemy flight within 15 hexes and rolls to meet it [40.3].
@@ -312,7 +317,7 @@ export function resolveAir(g, orders, ctx) {
     const fl = eligiblePlanes(sq, 'capD', incoming.f.hex, ctx);
     if (!fl) continue;
     ctx.log(sq.side, `${sq.name} scrambles to ${hexName(incoming.f.hex)} (rolled ${roll}, needed ${need} or less).`);
-    flights.push({ sq, side: sq.side, kind: 'capD', hex: incoming.f.hex, planes: fl.planes.map((p) => ({ sq, p, side: sq.side })) });
+    flights.push({ sq, side: sq.side, kind: 'capD', scrambled: true, hex: incoming.f.hex, from: fl.base, planes: fl.planes.map((p) => ({ sq, p, side: sq.side })) });
   }
   const flown = new Set(flights.flatMap((f) => f.planes.map((e) => e.p)));
   // 3. Air-to-air combat, hex by hex [45].
@@ -383,15 +388,28 @@ export function resolveAir(g, orders, ctx) {
         e.toe -= 1; done++; killed--; syncStr(u);
         if (!u.elements.some((x) => x.toe > 0 && ctx.weapons[x.w]?.class === 'infantry')) withInf.splice(withInf.indexOf(u), 1);
       }
-      say(`${sideName(side)} strafing of ${where} (${tac} TacAir, d66 ${roll}): ${done ? `${done} TOE point${done > 1 ? 's' : ''} of infantry eliminated.` : 'no effect.'}`);
+      const sres = done ? `${done} TOE point${done > 1 ? 's' : ''} of infantry eliminated` : 'no effect';
+      for (const f of flights.filter((x) => x.kind === 'strafe' && x.side === side && key(...x.hex) === hk)) f.result = sres;
+      say(`${sideName(side)} strafing of ${where} (${tac} TacAir, d66 ${roll}): ${sres}.`);
     }
   }
   // 4b. Bombing by the surviving bombers [41.2-41.3]. Flak is not in the game yet.
   for (const f of flights.filter((x) => isBombMission(x.kind))) {
     const live = f.planes.filter((e) => !down.has(e.p));
     const tons = live.reduce((n, e) => n + planeInfo(e.p).bomb, 0);
-    bombTarget(f, tons, live.length, ctx, say);
+    bombTarget(f, tons, live.length, ctx, (t) => { f.result = t.replace(/^.*?\): /, '').replace(/^.*? over \w+ /, ''); say(t); });
   }
+  // Record what happened so the map can show it.
+  g.lastAir = {
+    turn: ctx.turn, stage: ctx.opStage, n: (g.lastAir?.n || 0) + 1,
+    flights: [
+      ...flights.map((f) => ({
+        side: f.side, name: f.sq.name, kind: f.kind, scrambled: !!f.scrambled, from: f.from, to: f.hex,
+        sent: f.planes.length, lost: f.planes.filter((e) => down.has(e.p)).length, result: f.result || '',
+      })),
+      ...grounded,
+    ],
+  };
   // 5. Planes that flew need refitting, fuelling and arming again [38].
   for (const p of flown) { p.ready = false; p.fueled = false; p.armed = false; }
   // 6. Tactical Maintenance for both sides.

@@ -1025,6 +1025,11 @@ export function viewFor(g, side) {
     units: [...ownView, ...enemy],
     supply,
     air: airView(g, side, seen),
+    lastAir: g.lastAir ? {
+      n: g.lastAir.n, turn: g.lastAir.turn, stage: g.lastAir.stage,
+      // The enemy's bases stay hidden; their flights show only where they went and what happened.
+      flights: g.lastAir.flights.map((f) => (f.side === side ? f : { ...f, from: null, name: 'Enemy squadron', failed: undefined })).filter((f) => f.side === side || !f.failed && f.sent > 0),
+    } : null,
     box: side === 'axis' ? g.supply.box.axis.length : 0,
     plan: g.supply.plan.filter((p) => p.side === side).map(({ turn, n }) => ({ turn, n })),
     atSea: side === 'axis' ? (g.supply.convoys || []).map((c) => ({ turn: c.turn, stage: c.stage, port: c.port, route: c.route, n: c.units.length })) : [],

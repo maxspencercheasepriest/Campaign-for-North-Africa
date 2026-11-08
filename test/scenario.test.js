@@ -299,3 +299,20 @@ test('air game stage 3: bombing an air facility cuts its capacity and destroys p
   a.repairFacilities(g.air);
   assert.equal(fac.cap, before, 'one level is repaired each Game-Turn');
 });
+
+test('air phase leaves a record for the map: own flights with bases, enemy flights without', () => {
+  const g = createGame({ seed: 1, air: 'on' });
+  submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
+  submitOrders(g, g.initiative.holder, { goFirst: true });
+  assert.equal(viewFor(g, 'axis').lastAir, null);
+  const ax = g.air.squadrons.find((s) => s.side === 'axis' && s.kind === 'fighter' && s.planes.some((p) => p.ready && p.fueled));
+  const cw = g.air.squadrons.find((s) => s.side === 'cw' && s.kind === 'fighter' && s.planes.some((p) => p.ready && p.fueled && p.armed));
+  submitOrders(g, 'axis', { missions: [{ sq: ax.id, kind: 'strafe', hex: 'C4020' }] });
+  submitOrders(g, 'cw', { missions: [{ sq: cw.id, kind: 'capD', hex: 'C4020' }] });
+  const mine = viewFor(g, 'cw').lastAir, theirs = viewFor(g, 'axis').lastAir;
+  assert.ok(mine.flights.length >= 1);
+  assert.ok(mine.flights.filter((f) => f.side === 'cw').every((f) => f.from && f.name === cw.name));
+  assert.ok(theirs.flights.filter((f) => f.side === 'cw').every((f) => f.from === null && f.name === 'Enemy squadron'));
+  assert.equal(mine.n, 1);
+  JSON.stringify(mine);
+});
