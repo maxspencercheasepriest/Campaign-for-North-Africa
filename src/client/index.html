@@ -35,6 +35,13 @@
     <div id="lobbyHost" class="hidden lobby-host">
       <label class="row">Scenario <select id="optScenario"></select></label>
       <p id="scenarioBlurb" class="sub"></p>
+      <label class="row">Reinforcements <select id="optReinforce">
+        <option value="historical">Historical schedule</option>
+        <option value="early">Arrive two Game-Turns early</option>
+        <option value="none">None (what you start with)</option></select></label>
+      <label class="row">Starting supply <select id="optStock">
+        <option value="standard">Standard</option>
+        <option value="generous">Generous (double the supply units)</option></select></label>
       <button id="startBtn">Start the campaign</button>
     </div>
     <p id="lobbyWait" class="sub hidden">Waiting for the host to start the campaign…</p>

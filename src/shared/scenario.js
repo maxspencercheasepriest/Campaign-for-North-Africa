@@ -42,12 +42,12 @@ export const SCENARIOS = {
   italian: {
     id: 'italian', name: 'The Italian Campaign', firstTurn: 1, lastTurn: 20, initiativeFirstTurn: 'axis',
     victory: 'points', points: ITALIAN_POINTS, hours: '90-150 hours',
-    blurb: "Game-Turns 1-20, through Operation Compass (O'Connor's counter-offensive). Scored on towns held at the end. Reinforcement tables are not all entered yet, so later turns are thin.",
+    blurb: "Game-Turns 1-20, through Operation Compass (O'Connor's counter-offensive). Scored on towns held at the end. Reinforcements follow the book's schedule (approximate strengths).",
   },
   campaign: {
     id: 'campaign', name: 'The Campaign Game', firstTurn: 1, lastTurn: 111, initiativeFirstTurn: 'axis',
     victory: 'campaign', points: CAMPAIGN_POINTS, hours: 'a very long time',
-    blurb: 'The whole war, Game-Turns 1-111. Axis win outright by holding Alexandria and Cairo. Reinforcement, replacement and air schedules are not entered yet, so expect it to run dry.',
+    blurb: 'The whole war, Game-Turns 1-111. Axis win outright by holding Alexandria and Cairo. Land reinforcements are entered to GT40 (Commonwealth) and GT27 (Axis); replacements, withdrawals and air are not, so later turns run thin.',
   },
 };
 export const SCENARIO = SCENARIOS.graziani; // default
@@ -96,8 +96,8 @@ const at = (name) => hexFromName(name);
 // A formation is a counter made of weapon-system elements, each with TOE Strength Points (see weapons.js).
 // size: division | brigade | battalion (stacking points 5 / 2 / 1). cpa <= 10 means foot-bound.
 // Compositions follow the Organisation-at-Arrival style but are PROVISIONAL until those charts are fully entered.
-const E = (w, toe) => ({ w, toe, max: toe });
-const U = (id, side, nation, name, type, size, cpa, morale, elements, pos, extra = {}) => {
+export const E = (w, toe) => ({ w, toe, max: toe });
+export const U = (id, side, nation, name, type, size, cpa, morale, elements, pos, extra = {}) => {
   const u = {
     id, side, nation, name, type, size, cpa, morale, elements,
     motorised: cpa > 10,
@@ -137,17 +137,9 @@ export function initialUnits() {
   ];
 }
 
-// Reinforcements [4.43]. Only Rommel's DAK HQ (GT20 stage 2, 'Gm: Rommel [DAK]') is dated from the schedule; the other two
-// are placeholders that do not match it (the real schedule is piecemeal and battalion-level) and need replacing.
-export const REINFORCEMENTS = [
-  { turn: 13, location: 'alexandria', unit: U('cw-6aus', 'cw', 'au', '6th Australian Div', 'inf', 'division', 10, 1, [E('CW inf (k)', 63), E('25-pounder Gun', 12), E('2-pounder AT', 4)], null) },
-  { turn: 22, location: 'benghazi', unit: U('de-5l', 'axis', 'de', '5th Light Div', 'arm', 'division', 25, 2, [E('PzKw II', 6), E('PzKw III', 6), E('DE inf', 20)], null) },
-  { turn: 20, stage: 2, location: 'benghazi', unit: U('de-dak', 'axis', 'de', 'DAK HQ (Rommel)', 'hq', 'battalion', 30, 2, [], null, { rommel: true }) },
-];
-
 // Initial supply units [60.92 B and C: the abstract logistics rules, 32.0]. Each holds up to 40 Ammo and 60 Fuel.
 // The Axis Tripoli box lives off the map: those units must be shipped over by convoy.
-export function initialSupply() {
+export function initialSupply(mult = 1) {
   const su = (side, hex, ammo, fuel) => ({ side, pos: at(hex), ammo, fuel });
   const rep = (n, f) => Array.from({ length: n }, f);
   const units = [
@@ -158,7 +150,7 @@ export function initialSupply() {
     ...rep(5, () => su('cw', 'D3714', 40, 60)), su('cw', 'C4131', 40, 60), ...rep(3, () => su('cw', 'D3612', 40, 30)),
     ...rep(3, () => su('cw', 'E3613', 40, 60)), ...rep(3, () => su('cw', 'E1830', 40, 60)),
   ];
-  return { units, box: { axis: rep(8, () => ({ ammo: 5, fuel: 60 })), cw: [] } };
+  return { units, box: { axis: rep(8 * mult, () => ({ ammo: 5, fuel: 60 })), cw: [] } };
 }
 
 export function initialPortOwners() {

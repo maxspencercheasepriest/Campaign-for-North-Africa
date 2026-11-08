@@ -80,13 +80,41 @@ test('convoy orders are validated: one per lane, at most 3 each, lanes limited e
   assert.match(bad([{ port: 'matruh', route: 2, n: 1 }]), /not in your hands/);
 });
 
-test('reinforcements arrive in the Arrival Phase of the stage the schedule names [4.42]', () => {
-  const g = createGame({ scenario: 'italian', seed: 1 });
-  g.turn = 20; g.opStage = 1;
-  g.portOwners.benghazi = 'axis';
-  const before = g.units.length;
+const arrive = (opts, turn) => {
+  const g = createGame({ seed: 1, ...opts });
+  g.turn = turn;
   submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
-  assert.equal(g.units.length, before, 'not yet: Rommel is due in stage 2');
+  return g;
+};
+const has = (g, id) => g.units.some((u) => u.id === id);
+
+test('reinforcements arrive on the turn and stage the schedule names, and are held over if missed [4.42, 4.43]', () => {
+  const g = arrive({}, 3); // stage 1 of Game-Turn 3
+  assert.ok(has(g, 'cw-pol'), 'Polish Bde is due 1/3');
+  assert.ok(has(g, 'cw-rtr2'), '2 and 7 RTR are due 2/3');
+  assert.ok(!has(g, 'cw-1fa'), '1st Fld Arty is due 3/3, not yet');
+  const pol = g.units.find((u) => u.id === 'cw-pol');
+  assert.ok(g.log.some((l) => /Polish Bde arrives at Cairo/.test(l.text || l)));
+  assert.ok(pol.pos, 'placed on the map');
+});
+
+test('axis reinforcements start at GT9 and Rommel is dated GT20 stage 2', () => {
+  assert.ok(!has(arrive({}, 8), 'it-xxvarty'));
+  assert.ok(has(arrive({}, 10), 'it-xxvarty'));
+  assert.ok(!has(arrive({}, 20), 'de-dak'), 'GT20 stage 1: not yet');
+});
+
+test('reinforcement options: early brings them two turns sooner, none brings none', () => {
+  assert.ok(has(arrive({ reinforce: 'early' }, 5), 'cw-1fa'), '3/3 due by turn 5 stage 1 when early (turn 1)');
+  assert.ok(!has(arrive({ reinforce: 'none' }, 30), 'cw-pol'));
+});
+
+test('generous stock doubles the starting supply units without breaking stack limits', () => {
+  const a = createGame({ seed: 1 }), b = createGame({ seed: 1, stock: 'generous' });
+  assert.equal(b.supply.units.length, a.supply.units.length * 2);
+  const per = new Map();
+  for (const s of b.supply.units) per.set(`${s.side}${s.pos}`, (per.get(`${s.side}${s.pos}`) || 0) + 1);
+  assert.ok([...per.values()].every((n) => n <= 5));
 });
 
 test('a unit with some ammo in reach but less than an attack costs is told why', async () => {

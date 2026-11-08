@@ -20,6 +20,15 @@ const CITY_STACK = 5, OTHER_STACK = 3; // [32.14]
 const cityHexes = new Set(LOCATIONS.filter((l) => l.city).flatMap((l) => l.hexes.map((h) => key(...h))));
 export const supplyStackLimit = (map, hex) => (map.tiles[key(...hex)]?.t === 'majorcity' || cityHexes.has(key(...hex)) ? CITY_STACK : OTHER_STACK);
 
+// 'Generous' starting stock: a second supply unit beside each original one, on the nearest land hex with room [32.17].
+export function doubleStock(sup, map) {
+  for (const s of [...sup.units]) {
+    const ring = [s.pos, ...neighbours(...s.pos), ...neighbours(...s.pos).flatMap((h) => neighbours(...h))];
+    const spot = ring.find((h) => map.tiles[key(...h)] && map.tiles[key(...h)].t !== 'sea' && supplyAt(sup, h, s.side).length < supplyStackLimit(map, h));
+    if (spot) sup.units.push({ ...s, pos: spot });
+  }
+}
+
 export function createSupply({ units, box }) {
   const g = { units: [], box, plan: [], convoys: [], nextId: 1 };
   for (const u of units) g.units.push({ id: `su${g.nextId++}`, side: u.side, pos: u.pos, ammo: u.ammo, fuel: u.fuel, mp: 30 });

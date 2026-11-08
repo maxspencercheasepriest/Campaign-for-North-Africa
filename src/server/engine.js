@@ -12,13 +12,14 @@
 //   21-22 Breakdown (rolled when a unit stops) and automatic field repair of tanks; 29 Weather.
 // STILL PLACEHOLDER: supply/air/convoys (32 / 33-58), truck breakdown, facility repair, and more.
 
+import { REINFORCEMENTS } from '../shared/reinforcements.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
 import {
   SIDES, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
-  buildMap, initialUnits, initialSupply, initialPortOwners, REINFORCEMENTS, VISION_RANGE,
+  buildMap, initialUnits, initialSupply, initialPortOwners, VISION_RANGE,
 } from '../shared/scenario.js';
 import {
-  createSupply, supplyDiagnosis, supplyReach, suppliesInRange, fuelNeed, ammoCost, draw, drawHere, available, captureAt, hotWeatherLoss, planArrivals,
+  createSupply, doubleStock, supplyDiagnosis, supplyReach, suppliesInRange, fuelNeed, ammoCost, draw, drawHere, available, captureAt, hotWeatherLoss, planArrivals,
   receiveArrivals, scheduleConvoys, landConvoys, convoyList, moveSupply, resetMoved, axisConvoyLevel, cwSupplyPeriod,
   MAX_PER_CONVOY_LANE,
 } from './supply.js';
@@ -60,7 +61,7 @@ export function createGame(options = {}) {
     seg: null,
     options: { pastaRule: true, ...options },
     units: initialUnits(),
-    supply: createSupply(initialSupply()),
+    supply: createSupply(initialSupply(options.stock === 'generous' ? 2 : 1)),
     portOwners: initialPortOwners(),
     pending: { axis: null, cw: null },
     ready: { axis: false, cw: false },
@@ -74,6 +75,7 @@ export function createGame(options = {}) {
     over: false,
     seed: Number.isInteger(options.seed) ? options.seed >>> 0 : (Date.now() ^ 0x9e3779b9) >>> 0,
   };
+  if (options.stock === 'generous') doubleStock(g.supply, gameMap());
   startGameTurn(g);
   return g;
 }
@@ -360,16 +362,24 @@ function resolveConvoy(g, o) {
 }
 
 // Reinforcements arrive in the Naval Convoy Arrival Phase of the Operations Stage the schedule names [4.42, 4.43].
+// Option `reinforce`: 'historical' (the book's dates), 'early' (two Game-Turns sooner), 'none'.
+const reinfTurn = (g, r) => r.turn - (g.options.reinforce === 'early' ? 2 : 0);
 function reinforcementArrivals(g) {
-  for (const r of REINFORCEMENTS.filter((x) => x.turn === g.turn && (x.stage ?? 1) === g.opStage)) {
-    if (g.units.some((u) => u.id === r.unit.id)) continue;
+  if (g.options.reinforce === 'none') return;
+  g.arrived ||= [];
+  const now = g.turn * 4 + g.opStage;
+  // Due now, or held over from an earlier stage because the port was lost or the hexes were full.
+  for (const r of REINFORCEMENTS.filter((x) => reinfTurn(g, x) * 4 + (x.stage ?? 1) <= now && !g.arrived.includes(x.unit.id))) {
+    if (r.unit.rommel && g.turn > reinfTurn(g, r) + 3) { g.arrived.push(r.unit.id); continue; }
     const p = LOCATIONS.find((x) => x.id === r.location);
     if (g.portOwners[p.id] !== r.unit.side) continue;
-    const [pc, pr] = p.hexes[0];
-    const spot = [[pc, pr], ...neighbours(pc, pr)].find((h) =>
+    const cands = p.hexes.flatMap(([c, rw]) => [[c, rw], ...neighbours(c, rw)]);
+    const spot = cands.find((h) =>
       gameMap().tiles[key(...h)] && gameMap().tiles[key(...h)].t !== 'sea' &&
+      !unitsAt(g, h).some((u) => u.side !== r.unit.side) &&
       hexSP(unitsAt(g, h)) + (STACKING_POINTS[r.unit.size] ?? 0) <= stackingLimit(gameMap(), h));
     if (!spot) continue;
+    g.arrived.push(r.unit.id);
     g.units.push({ ...structuredClone(r.unit), pos: spot });
     log(g, r.unit.side, `Reinforcements: ${r.unit.name} arrives at ${p.name}.`);
   }
