@@ -160,7 +160,7 @@ export const weatherAt = (g, hex) => localWeather(g.weather, gameMap(), hex);
 
 function startOpStage(g, n) {
   g.opStage = n;
-  for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; u.fuelPaid = false; }
+  for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; u.fuelPaid = false; u.reserve = 0; u.relFrom = 0; u.relCap = null; u.assaults = 0; u.resDp = false; }
   resetMoved(g.supply);
   convoyArrivalPhase(g);
   rollWeather(g);
@@ -461,6 +461,8 @@ export function act(g, side, a) {
   if (g.step !== 'movecombat' || phasingSide(g) !== side) return 'It is not your Movement & Combat Phase.';
   switch (a?.action) {
     case 'move': return actMove(g, side, a);
+    case 'reserve': return actReserve(g, side, a);
+    case 'release': return actRelease(g, side, a);
     case 'toCombat':
       if (g.seg.mode !== 'move') return 'Already in the combat segment.';
       g.seg.mode = 'combat';
@@ -513,8 +515,16 @@ function actMove(g, side, a) {
   if (collapsed(u)) return `${u.name} is too disorganised to move (cohesion ${u.cohesion}).`;
   if (g.seg.moved.includes(u.id)) return `${u.name} has already moved this segment.`;
   if (g.seg.frozen.includes(u.id)) return `${u.name} finished a segment more than ${CONTINUAL_MOVE_RANGE} hexes from the enemy and cannot move again this phase [8.23].`;
+  if (u.reserve === 2) return `${u.name} is in Reserve II and may not move [18.22].`;
   const plan = planMove(g, u, a.path);
   if (typeof plan === 'string') return plan;
+  if (u.reserve === 1) {
+    // Reserve I: one hex at no CP cost, never into an enemy-controlled hex [18.22].
+    if (a.path.length !== 1) return `${u.name} is in Reserve I and may move only one hex [18.22].`;
+    if (inEnemyZoc(g, u, a.path[0])) return `${u.name} is in Reserve and may not enter an enemy-controlled hex [18.22].`;
+    plan.cp = 0; plan.bp = 0; plan.sandCp = 0;
+  }
+  if (u.relCap != null && u.cpUsed + plan.cp > u.relCap) return `${u.name} was released from Reserve ${u.relFrom === 1 ? 'I' : 'II'} and may not voluntarily spend more than ${u.relCap} CP this stage [18.23, 18.24].`;
   if (u.cpa <= 10 && u.cpUsed + plan.cp > u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT) {
     return `${u.name} is on foot and may not voluntarily spend more than ${u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT} CP this stage [8.17].`;
   }
@@ -715,7 +725,7 @@ function freezeAfterSegment(g) {
 export function attackObligations(g, side) {
   const out = [];
   for (const e of g.units.filter((x) => x.side !== side && exertsZoc(g, x))) {
-    const threatened = g.units.filter((u) => u.side === side && isCombatUnit(u) && zocReaches(g, e, u.pos));
+    const threatened = g.units.filter((u) => u.side === side && isCombatUnit(u) && !u.reserve && zocReaches(g, e, u.pos));
     if (threatened.length) out.push({ enemy: e, threatened });
   }
   return out;
@@ -726,11 +736,48 @@ function unmetAttackObligations(g, side) {
   return `Units in an enemy zone of control must attack it before the segment ends [10.31]: ${unmet.map((o) => o.enemy.name).join(', ')}.`;
 }
 
+// ---------- Reserve [18.0] ----------
+// Reserve Designation Phase: before anything has moved in the Phase, the phasing player may place units in Reserve I [18.11, 18.12, 18.15].
+function actReserve(g, side, a) {
+  if (g.seg.n !== 1 || g.seg.mode !== 'move' || g.seg.moved.length) return 'Units can only be placed in Reserve in the Reserve Designation Phase, before the Phase\'s first movement [18.15].';
+  let n = 0;
+  for (const id of a.unitIds || []) {
+    const u = g.units.find((x) => x.id === id && x.side === side);
+    if (!u) return 'Unknown unit.';
+    if (!isCombatUnit(u)) return `${u.name} is not a combat unit.`;
+    if (collapsed(u)) return `${u.name} is too disorganised to be held in Reserve.`;
+    u.reserve = a.off ? 0 : 1;
+    n++;
+  }
+  if (n) log(g, side, `${n} unit${n > 1 ? 's' : ''} ${a.off ? 'taken out of' : 'placed in'} Reserve.`);
+  return null;
+}
+
+// Reserve Release Segment, after a Combat Segment [18.23, 18.24, 18.25].
+function actRelease(g, side, a) {
+  if (g.seg.mode !== 'combat') return 'Units are released in the Reserve Release Segment, after the Combat Segment.';
+  const released = [];
+  for (const id of a.unitIds || []) {
+    const u = g.units.find((x) => x.id === id && x.side === side);
+    if (!u || !u.reserve) return 'That unit is not in Reserve.';
+    if (u.reserve === 2 && g.seg.n === 1) return `${u.name} is in Reserve II and can only be released in a later Reserve Release Segment [18.24].`;
+    u.relFrom = u.reserve;
+    u.relCap = u.reserve === 1 ? u.cpa : Math.floor(u.cpa / 2);
+    u.reserve = 0;
+    g.seg.frozen = g.seg.frozen.filter((x) => x !== u.id); // may move next segment even if far from the enemy [18.25]
+    released.push(u.name);
+  }
+  if (released.length) log(g, side, `Released from Reserve: ${released.join(', ')}.`);
+  return null;
+}
+
 function actNextSegment(g, side) {
   if (g.seg.mode === 'combat') {
     const err = unmetAttackObligations(g, side);
     if (err) return err;
   }
+  // Units still in Reserve I after the first Reserve Release Segment go to Reserve II [18.13].
+  if (g.seg.n === 1) for (const u of g.units) if (u.side === side && u.reserve === 1) u.reserve = 2;
   freezeAfterSegment(g);
   g.seg = { n: g.seg.n + 1, mode: 'move', moved: [], attacked: [], frozen: g.seg.frozen };
   for (const u of g.units) if (u.side === side) u.contact = inEnemyZoc(g, u, u.pos);
@@ -750,6 +797,8 @@ function actAttack(g, side, a) {
   for (const u of attackers) {
     if (distance(u.pos, targetPos) !== 1) return `${u.name} is not adjacent to ${target.name}.`;
     if (collapsed(u)) return `${u.name} is too disorganised to attack.`;
+    if (u.reserve) return `${u.name} is in Reserve and cannot attack until released [18.2].`;
+    if (u.relFrom && (u.assaults || 0) >= 1) return `${u.name} came out of Reserve and may make only one offensive assault this Operations Stage [18.23, 18.24].`;
     if (!isCombatUnit(u)) return `${u.name} is not a combat unit.`;
     const e = map.hexsides[edgeKey(u.pos, targetPos)];
     if (u.motorised && e?.type === 'escarpment' && e.down === key(...u.pos)) return `${u.name} is motorised and cannot assault up an escarpment [15.34].`;
@@ -765,6 +814,11 @@ function actAttack(g, side, a) {
       return `${u.name} needs ${cost} Ammo from a supply unit within ${u.cpa / 2} CP to attack [32.21].`;
     }
     u.ammo = 1;
+  }
+  for (const u of attackers) {
+    if (!u.relFrom) continue;
+    u.assaults = (u.assaults || 0) + 1;
+    if (u.relFrom === 2 && !u.resDp) { u.cohesion -= 1; u.resDp = true; } // one Disorganization Point [18.24 (3)]
   }
   // The hex counts as attacked from now on [15.23]; the defender now makes its choices [12.1, 13.0, 14.0].
   g.seg.attacked.push(key(...targetPos));

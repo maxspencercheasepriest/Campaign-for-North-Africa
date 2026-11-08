@@ -358,10 +358,17 @@ function moveCombatPanel() {
   if (seg.mode === 'move') {
     html += `<p class="help">Click one of your units, then a highlighted hex. Units stop on entering an enemy zone of control. Units that end a segment more than 2 hexes from the enemy can't move again this phase.</p>`;
     if (sel) html += unitCard(sel);
+    if (seg.n === 1 && !seg.moved.length && sel && isCombat(sel)) {
+      html += `<div class="btnrow"><button data-reserve="${sel.id}" data-off="${sel.reserve ? 1 : 0}">${sel.reserve ? 'Take out of Reserve' : 'Place in Reserve'}</button></div><p class="help">Reserve Designation Phase [18]: do this before anything moves. Units in Reserve I may move one hex; the rest of the Phase they may be released after combat.</p>`;
+    }
+    const inRes = myUnits().filter((u) => u.reserve);
+    if (inRes.length) html += `<p class="help">In Reserve: ${inRes.map((u) => `${esc(u.name)} (${u.reserve === 1 ? 'I' : 'II'})`).join(', ')}.</p>`;
     html += `<div class="btnrow"><button class="act" data-act="toCombat">Finish moving → combat</button></div>`;
     html += lastCombatReport();
   } else {
     html += combatList();
+    const rel = myUnits().filter((u) => u.reserve && (u.reserve === 1 ? seg.n === 1 : seg.n > 1));
+    if (rel.length) html += `<h4>Reserve Release Segment</h4>${rel.map((u) => `<div class="btnrow"><button data-release="${u.id}">Release ${esc(u.name)}</button></div>`).join('')}<p class="help">Released from Reserve I: may not exceed its CPA, one assault. From Reserve II: half CPA, one assault, +1 disorganization point if it assaults [18.23-18.24].</p>`;
     html += `<div class="btnrow"><button class="act" data-act="nextSegment">New movement segment</button></div>`;
   }
   html += obligationList();
@@ -376,6 +383,7 @@ function unitCard(u) {
     CPA ${u.cpa} · used ${fmtCP(u.cpUsed)}${u.cpa <= 10 ? ` (foot: max ${u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT})` : ''} · cohesion <b class="${u.cohesion < 0 ? 'bad' : ''}">${u.cohesion}</b><br>
     Morale ${u.morale > 0 ? '+' : ''}${u.morale} · TOE ${u.str}/${u.maxStr}${u.fuelNeed ? ` · fuel ${Math.floor(u.fuelAvail)}/${u.fuelNeed}` : ''} · ammo in reach ${Math.floor(u.ammoAvail)}${u.motorised ? ` · breakdown pts ${fmtCP(u.bp)}` : ''}
     <br><span class="muted">${(u.elements || []).map((e) => `${e.toe}× ${esc(e.w)}`).join(' · ')}</span>
+    ${u.reserve ? `<br><b>In Reserve ${u.reserve === 1 ? 'I (may move one hex)' : 'II (may not move)'}.</b>` : u.relFrom ? `<br><span class="muted">Released from Reserve ${u.relFrom === 1 ? 'I' : 'II'}: max ${u.relCap} CP, one assault.</span>` : ''}
     ${frozen ? '<br><span class="bad">Cannot move again this phase.</span>' : moved ? '<br><span class="muted">Already moved this segment.</span>' : ''}</div>`;
 }
 const fmtCP = (n) => (Number.isInteger(n) ? n : n.toFixed(1));
@@ -446,6 +454,8 @@ function wireOrders(el) {
     selected = null;
     send({ type: 'action', action: b.dataset.act });
   }));
+  el.querySelectorAll('[data-reserve]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'reserve', unitIds: [b.dataset.reserve], off: b.dataset.off === '1' })));
+  el.querySelectorAll('[data-release]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'release', unitIds: [b.dataset.release] })));
   el.querySelectorAll('[data-attack]').forEach((b) => (b.onclick = () => {
     const id = b.dataset.attack;
     const attackerIds = [...el.querySelectorAll(`[data-att="${id}"]:checked`)].map((c) => c.value);
@@ -767,6 +777,10 @@ function drawCounter(u, i, n) {
   ctx.lineWidth = u.id === selected ? 3 : 1.5;
   ctx.strokeStyle = u.id === selected ? '#1c3d8c' : u.side !== mySide() ? '#a3241a' : SIDE_COLORS[u.side].edge;
   ctx.strokeRect(x - w / 2, y - h / 2, w, h);
+  if (u.reserve) { // Reserve marker on top of the unit [18.12]
+    ctx.fillStyle = '#7a1f1f'; ctx.fillRect(x - w / 2, y - h / 2 - s * 0.05, w * 0.5, s * 0.32);
+    ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.max(6, s * 0.26)}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText(u.reserve === 1 ? 'R I' : 'R II', x - w / 4, y - h / 2 + s * 0.2);
+  }
   // NATO-style symbol
   const bw = w * 0.6, bh = h * 0.42, bx = x - bw / 2, by = y - h * 0.38;
   ctx.strokeStyle = '#222'; ctx.lineWidth = 1.2; ctx.strokeRect(bx, by, bw, bh);
@@ -879,6 +893,7 @@ function clickHex([c, r]) {
 window.__desertCommand = {
   reachable() { return reachCache ? [...reachCache.entries()].map(([k, v]) => ({ name: nameOfHex(...parseKey(k)), cost: v.cost, stop: v.stop })) : []; },
   supplyReach() { const x = (S?.game?.supply || []).find((y) => y.id === selectedSupply); return x?.reach ? Object.keys(x.reach).map((k) => nameOfHex(...parseKey(k))) : []; },
+  myUnitIds() { return (S?.game?.units || []).filter((u) => u.own !== false && u.side === mySide() && u.type !== 'hq').map((u) => u.id); },
   unitHex(id) { const u = (S?.game?.units || []).find((x) => x.id === id); return u ? nameOfHex(...u.pos) : null; },
   neighbours(name) { return neighbours(...hexFromName(name)).map((h) => nameOfHex(...h)); },
   screenOf(name) {

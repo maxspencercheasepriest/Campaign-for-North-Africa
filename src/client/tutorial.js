@@ -72,9 +72,9 @@ export function stepHelp(game, { side, canAct }) {
       const mine = game.phasing === side;
       if (!mine) return out('Enemy phase', ['The enemy is moving and fighting. If they attack you, a panel will ask how to defend and whether to retreat before the assault. Watch the log.']);
       if (game.seg?.mode === 'combat') {
-        return out('Combat segment', ['Choose a target in the list, tick the units that attack it, and press Attack. Obligations marked outstanding must be attacked before you can end the phase.', 'Press New movement segment to move again, or End phase when finished.']);
+        return out('Combat segment', ['Choose a target in the list, tick the units that attack it, and press Attack. Obligations marked outstanding must be attacked before you can end the phase.', 'Units you held in Reserve can be released here (Reserve Release Segment). Press New movement segment to move again, or End phase when finished.']);
       }
-      return out('Movement segment', ['Click one of your units; reachable hexes are highlighted with their CP cost. Click a hex to move there.', 'Units that start next to the enemy pay extra to break contact. When you are done, press Finish moving to go to combat.', 'Motorised units need fuel in reach of a supply unit (see the Supply tab) or they cannot move.']);
+      return out('Movement segment', ['Click one of your units; reachable hexes are highlighted with their CP cost. Click a hex to move there.', 'Units that start next to the enemy pay extra to break contact. When you are done, press Finish moving to go to combat.', 'Motorised units need fuel in reach of a supply unit (see the Supply tab) or they cannot move.', 'Before anything moves in the phase you may hold units back in Reserve: select a unit and press Place in Reserve. Reserve I units may shuffle one hex; release them after combat to use them later in the phase (Reserve rules, 18).']);
     }
     case 'trucks':
       return out('Truck Convoy Phase', ['Click one of your supply units (small square) and then a destination hex up to 15 CP away. Each move costs the unit 1 Fuel and it can move once per stage.', 'Move supply forward to keep your army fed, but not within reach of the enemy. Press the button to finish.', ...watch]);
