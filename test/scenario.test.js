@@ -511,3 +511,23 @@ test('bombing a port cuts its efficiency; it regains one level per quiet Operati
   assert.equal(sup.units.length, 2);
   assert.equal(sup.box.axis.length, 2);
 });
+
+test('port points: holding a captured port earns points and every 10 bring a reinforcement forward', async () => {
+  const { awardPortPoints } = await import('../src/server/engine.js');
+  const g = createGame({ seed: 8, reinforce: 'none', air: 'off' });
+  g.portOwners.tobruk = 'cw'; // a CW-held port that began Axis: big port, 3 points a turn
+  g.portOwners.derna = 'cw';  // medium: 2
+  const before = g.units.length;
+  for (let i = 0; i < 2; i++) awardPortPoints(g);
+  assert.equal(g.portPoints.cw, 10);
+  assert.equal(g.portClaims.cw, 1);
+  assert.equal(Object.keys(g.bonusAt).length, 1);
+  assert.equal(viewFor(g, 'cw').portRewards.points, 10);
+  assert.equal(g.portPoints.axis, 0, 'home ports earn nothing');
+  const off = createGame({ seed: 8, portRewards: 'off' });
+  off.portOwners.tobruk = 'cw';
+  awardPortPoints(off);
+  assert.equal(off.portPoints.cw, 0);
+  assert.equal(viewFor(off, 'cw').portRewards, null);
+  void before;
+});

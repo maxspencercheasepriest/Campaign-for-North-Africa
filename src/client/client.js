@@ -518,6 +518,12 @@ function wireOrders(el) {
 
 // ---------- Supply / formations ----------
 
+function portRewardsHtml() {
+  const p = S.game.portRewards;
+  if (!p) return '';
+  return `<h3>Port points</h3><p><b>${p.points}</b> of ${p.next} for the next reinforcement · enemy ${p.foe}</p><p class="help">Each Game-Turn you earn 3 points for a big port you have taken and still hold, 2 for a medium one and 1 for a small one. Every 10 points brings the next scheduled reinforcement forward to your best captured port.</p>`;
+}
+
 function victoryHtml(v) {
   if (!v) return '';
   if (v.mode === 'points') {
@@ -549,6 +555,7 @@ function renderSupply() {
   el.innerHTML = `${formations}${dumps}${box}
     <p>Prisoners held: <b>${g.prisoners?.[mySide()] ?? 0}</b> TOE points.</p>
     ${victoryHtml(v)}
+    ${portRewardsHtml()}
     <p class="help">Units draw Fuel (once per Operations Stage) and Ammunition (at combat) from supply units within half their CPA [32.2]. Spending past the allowance costs cohesion. A stage spent resting restores up to 5 cohesion (never above 0). At −26 a unit can't move or fight.</p>`;
 }
 
@@ -644,7 +651,7 @@ const scenSel = $('optScenario');
 scenSel.innerHTML = Object.values(SCENARIOS).map((sc) => `<option value="${sc.id}">${esc(sc.name)} (GT 1-${sc.lastTurn})</option>`).join('');
 const showBlurb = () => { const sc = SCENARIOS[scenSel.value]; $('scenarioBlurb').textContent = `${sc.blurb} Estimated play: ${sc.hours}.`; };
 scenSel.onchange = showBlurb; showBlurb();
-$('startBtn').onclick = () => send({ type: 'start', options: { scenario: scenSel.value, reinforce: $('optReinforce').value, troops: $('optTroops').value, stock: $('optStock').value, air: $('optAir').value } });
+$('startBtn').onclick = () => send({ type: 'start', options: { scenario: scenSel.value, reinforce: $('optReinforce').value, troops: $('optTroops').value, stock: $('optStock').value, air: $('optAir').value, portRewards: $('optPorts').value } });
 
 // ---------- Tabs ----------
 

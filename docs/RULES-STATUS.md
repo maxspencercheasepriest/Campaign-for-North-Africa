@@ -66,3 +66,7 @@ Every column of every dice table is checked automatically to cover all 36 result
 - **Map:** 🟡 all five sections are digitised automatically by `tools/map/` (OCR of hex numbers → grid fit → colour classification of each hex and hexside). That gives about 7,000 hexes and about 2,000 hexside features, and the game uses the board's hex numbers (Tobruk = C4807). The coast road is traced between the towns it runs through (`tools/map/coastroad.py`). Known weak spots: hexes split between two terrains take whichever covers the centre; villages, oases, airfields and minefields aren't read yet. Fixes go in `src/shared/mapfixes.js`.
 - **Units:** the Organisation-at-Arrival charts. Italian and Commonwealth weapon ratings are entered; German ones are provisional. Scenario units are built from real weapon types but with approximate compositions.
 - **Reinforcement and withdrawal schedules.**
+
+## House rules (not in the book)
+
+- **Port rewards** (lobby option, on by default): each Game-Turn a side earns 3, 2 or 1 points for every big, medium or small port it took from the other side and still holds. Every 10 points pulls that side's next scheduled reinforcement forward to its best captured port. Points are shown in the Supply tab.

@@ -85,6 +85,9 @@ export function createGame(options = {}) {
     air: createAir(),
     damage: newDamage(),
     portOwners: initialPortOwners(),
+    portPoints: { axis: 0, cw: 0 },
+    portClaims: { axis: 0, cw: 0 },
+    bonusAt: {},
     pending: { axis: null, cw: null },
     ready: { axis: false, cw: false },
     log: [],
@@ -161,7 +164,7 @@ function startGameTurn(g) {
   g.order = null;
   g.half = null;
   returnPilots(g.air, g.turn);
-  if (g.turn > scenarioOf(g).firstTurn) { repairFacilities(g.air); repairDamage(g); }
+  if (g.turn > scenarioOf(g).firstTurn) { repairFacilities(g.air); repairDamage(g); awardPortPoints(g); }
   setStep(g, 'convoy');
 }
 
@@ -417,14 +420,43 @@ const reinfTurn = (g, r) => (isStrong(g, r) ? scenarioOf(g).firstTurn : r.turn -
 // Option `troops: 'strong'`: everything due in the first 12 Game-Turns is already on the map at the start (in Cairo and at El Agheila).
 const isStrong = (g, r) => g.options.troops === 'strong' && r.turn < scenarioOf(g).firstTurn + 12;
 const reinfStage = (g, r) => (isStrong(g, r) ? 1 : r.stage ?? 1);
+// ---------- Port points (house rule, option portRewards) ----------
+// Each Game-Turn a side earns points for every port it has taken from the other side and still holds; every 10 points
+// pulls the next scheduled reinforcement forward, to arrive at the most valuable captured port it holds.
+export const PORT_BATCH = 10;
+export const portValue = (l) => (l.capacity >= 0.5 ? 3 : l.capacity >= 0.25 ? 2 : 1);
+const homeOwners = initialPortOwners();
+export function awardPortPoints(g) {
+  if (g.options.portRewards === 'off') return;
+  g.portPoints ||= { axis: 0, cw: 0 }; g.portClaims ||= { axis: 0, cw: 0 }; g.bonusAt ||= {};
+  for (const side of SIDES) {
+    const held = LOCATIONS.filter((l) => l.port && g.portOwners[l.id] === side && homeOwners[l.id] !== side);
+    const gain = held.reduce((n, l) => n + portValue(l), 0);
+    if (!gain) continue;
+    g.portPoints[side] += gain;
+    log(g, side, `Port points: +${gain} for holding ${held.map((l) => l.name).join(', ')} (total ${g.portPoints[side]}).`);
+    while (g.portPoints[side] >= (g.portClaims[side] + 1) * PORT_BATCH) {
+      g.portClaims[side]++;
+      const next = REINFORCEMENTS.filter((x) => x.unit.side === side && !g.arrived?.includes(x.unit.id) && !g.bonusAt[x.unit.id])
+        .sort((a, b) => a.turn - b.turn)[0];
+      const best = [...held].sort((a, b) => b.capacity - a.capacity)[0];
+      if (!next) { log(g, side, 'Port bonus earned, but no reinforcements are left to bring forward.'); continue; }
+      g.bonusAt[next.unit.id] = best.id;
+      log(g, side, `Port bonus: ${next.unit.name} is pulled forward and will land at ${best.name}.`);
+    }
+  }
+}
+
 function reinforcementArrivals(g) {
-  if (g.options.reinforce === 'none') return;
+  const bonus = (x) => !!g.bonusAt?.[x.unit.id];
+  if (g.options.reinforce === 'none' && !Object.keys(g.bonusAt || {}).length) return;
   g.arrived ||= [];
   const now = g.turn * 4 + g.opStage;
   // Due now, or held over from an earlier stage because the port was lost or the hexes were full.
-  for (const r of REINFORCEMENTS.filter((x) => reinfTurn(g, x) * 4 + reinfStage(g, x) <= now && !g.arrived.includes(x.unit.id))) {
+  const due = (x) => bonus(x) || (g.options.reinforce !== 'none' && reinfTurn(g, x) * 4 + reinfStage(g, x) <= now);
+  for (const r of REINFORCEMENTS.filter((x) => due(x) && !g.arrived.includes(x.unit.id))) {
     if (r.unit.rommel && g.turn > reinfTurn(g, r) + 3) { g.arrived.push(r.unit.id); continue; }
-    const p = LOCATIONS.find((x) => x.id === r.location);
+    const p = LOCATIONS.find((x) => x.id === (g.bonusAt?.[r.unit.id] || r.location));
     if (g.portOwners[p.id] !== r.unit.side) continue;
     const cands = p.hexes.flatMap(([c, rw]) => [[c, rw], ...neighbours(c, rw)]);
     const spot = cands.find((h) =>
@@ -1083,6 +1115,7 @@ function buildView(g, side) {
     plan: g.supply.plan.filter((p) => p.side === side).map(({ turn, n }) => ({ turn, n })),
     atSea: side === 'axis' ? (g.supply.convoys || []).map((c) => ({ turn: c.turn, stage: c.stage, port: c.port, route: c.route, n: c.units.length })) : [],
     victory: victoryStatus(g),
+    portRewards: g.options.portRewards === 'off' ? null : { points: g.portPoints?.[side] ?? 0, next: ((g.portClaims?.[side] ?? 0) + 1) * PORT_BATCH, foe: g.portPoints?.[side === 'axis' ? 'cw' : 'axis'] ?? 0 },
     convoyLevel: side === 'axis' ? axisConvoyLevel(g.turn) : null,
     supplyPeriod: side === 'cw' ? cwSupplyPeriod(g.turn) : null,
     portOwners: g.portOwners,
