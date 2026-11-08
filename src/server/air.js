@@ -1,7 +1,7 @@
 // The Air Game, stage 2: the Land Support Air Phase. Fighter missions only (bombing and flak come later).
 // Rules used: air supply and Tactical Maintenance [38], flight limits [37.22, 39.11], scramble [40.3], CAP and
 // strafing missions [40], air-to-air combat [45] and pilot recovery [34.8, 45].
-import { AIRCRAFT, SQUADRON_CAPACITY, facilityHex } from '../shared/air.js';
+import { AIRCRAFT, SQUADRON_CAPACITY, FACILITY_CAPACITY, facilityHex } from '../shared/air.js';
 import { distance, key } from '../shared/hex.js';
 import { hexFromName, nameOfHex } from '../shared/hexnames.js';
 import { syncStr } from './combat.js';
@@ -39,6 +39,49 @@ export function strafeResult(col, roll) {
   if (col < 0) return 0;
   col = Math.min(9, col);
   return roll >= STRAFE_T3[col] ? 3 : roll >= STRAFE_T2[col] ? 2 : roll >= STRAFE_T1[col] ? 1 : 0;
+}
+
+
+// ---------- Air Bombardment and Secondary Barrage Targets Table [41.5] ----------
+// Columns by bomb tonnage: 1-20, 21-40, 41-80, 81-120, 121-160, 161-200, 201-260, 261-320, 321-390, 391-470, 471+.
+// Each row gives the d66 range (sequential) that yields that result; '-' means it cannot happen in that column.
+const COL_MAX = [20, 40, 80, 120, 160, 200, 260, 320, 390, 470, Infinity];
+export const bombColumn = (tons) => (tons <= 0 ? -1 : COL_MAX.findIndex((m) => tons <= m));
+const rows = (list) => list.map(([result, spec]) => ({ result, cols: spec.split(/\s+/).map((c) => (c === '-' ? null : c.split('-').map(Number).concat(c.includes('-') ? [] : [Number(c)]).slice(0, 2))) }));
+const FAC_ROWS = rows([
+  [0, '11-62 11-55 11-51 11-42 11-36 11-31 11-15 11-12 - - -'],
+  [1, '63-66 56-66 52-66 43-66 41-62 32-56 16-55 13-46 11-43 11-36 11-25'],
+  [2, '- - - - 63-66 61-66 56-65 51-64 44-63 41-55 26-52'],
+  [3, '- - - - - - 66 65-66 64-65 56-63 53-61'],
+  [4, '- - - - - - - - 66 64-66 62-66'],
+]);
+const DUMP_ROWS = rows([
+  [0, '11-62 11-56 11-46 11-34 11-16 - - - - - -'],
+  [10, '63-66 61-66 51-66 35-64 21-56 11-46 11-34 11-16 - - -'],
+  [20, '- - - 65-66 61-66 51-64 35-56 21-46 11-34 11-16 -'],
+  [30, '- - - - - 65-66 61-66 51-64 35-56 21-46 11-34'],
+  [40, '- - - - - - - 65-66 61-66 51-64 35-56'],
+  [50, '- - - - - - - - - 65-66 61-64'],
+  [75, '- - - - - - - - - - 65-66'],
+]);
+// Troops, trucks, flak and the Commonwealth fleet: battalion-equivalents pinned.
+const PIN_ROWS = rows([
+  [0, '11-62 11-46 11-16 11-12 - - - - - - -'],
+  [1, '63-66 51-66 21-66 13-42 11-24 - - - - - -'],
+  [2, '- - - 43-66 25-46 11-36 11-16 - - - -'],
+  [3, '- - - - 51-66 41-62 21-46 11-34 11-16 - -'],
+  [4, '- - - - - 63-66 51-66 35-64 21-56 11-46 11-16'],
+  [5, '- - - - - - - 65-66 61-64 51-56 21-46'],
+  [6, '- - - - - - - - 65-66 61-66 51-64'],
+  [7, '- - - - - - - - - - 65-66'],
+]);
+export const BOMB_TABLES = { facility: FAC_ROWS, dump: DUMP_ROWS, pin: PIN_ROWS };
+const _ = null; void _;
+export function bombResult(table, col, roll) {
+  if (col < 0) return 0;
+  let best = table[0].result;
+  for (const row of table) { const c = row.cols[col]; if (c && roll >= c[0] && roll <= c[1]) best = row.result; }
+  return best;
 }
 
 // ---------- Air supply and maintenance ----------
@@ -85,6 +128,11 @@ export function tacticalMaintenance(air, ctx) {
   }
 }
 
+// Bombed facilities recover one level a Game-Turn. This is a stand-in until the construction rules are built.
+export function repairFacilities(air) {
+  for (const f of air.facilities) { const max = FACILITY_CAPACITY[f.kind]; if (f.cap < max) f.cap += 1; }
+}
+
 // Surviving pilots rejoin their squadron a Game-Turn later [34.83].
 export function returnPilots(air, turn) {
   for (const r of air.returning.filter((x) => x.turn <= turn)) {
@@ -96,13 +144,20 @@ export function returnPilots(air, turn) {
 }
 
 // ---------- Orders ----------
-export const MISSION_KINDS = { capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)' };
+export const MISSION_KINDS = { capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility' };
+const BOMB_KINDS = ['bCU', 'bSD', 'bAF'];
+export const isBombMission = (k) => BOMB_KINDS.includes(k);
 
 // Planes of a squadron that can fly the mission right now.
+// In the charts "!" means a capability that may not be flown at night and "N" one that may, so an N-plane can also fly by day [4.44].
+const capable = (p, need) => { const t = planeInfo(p).caps.split(' '); return t.includes(need) || t.includes('N'); };
 function flyable(sq, kind) {
+  if (isBombMission(kind)) return sq.planes.filter((p) => flightReady(p) && p.armed && planeInfo(p).bomb > 0 && capable(p, 'B'));
   const need = kind === 'strafe' ? 'S' : 'F';
-  return sq.planes.filter((p) => flightReady(p) && planeInfo(p).caps.split(' ').includes(need));
+  return sq.planes.filter((p) => flightReady(p) && (need === 'S' ? planeInfo(p).caps.split(' ').includes('S') : capable(p, 'F')));
 }
+// Blenheim IVF, Bf 110 and Ju 88c lose 4 Maneuver points by day [40.92].
+const manOf = (p) => planeInfo(p).man - (/Blenheim Mk\.IVF|Bf.?110|Ju.?88c/i.test(p.type) ? 4 : 0);
 
 export function validateAirOrders(g, side, o, map) {
   if (o.missions != null && !Array.isArray(o.missions)) return 'Missions must be a list.';
@@ -110,10 +165,12 @@ export function validateAirOrders(g, side, o, map) {
   for (const m of o.missions || []) {
     const sq = g.air.squadrons.find((s) => s.id === m.sq);
     if (!sq || sq.side !== side) return 'Choose one of your own squadrons.';
-    if (sq.kind !== 'fighter') return `${sq.name} is not a fighter squadron; only fighter missions are in the game so far.`;
     if (used.has(sq.id)) return `${sq.name} has two missions: one per squadron.`;
     used.add(sq.id);
     if (!MISSION_KINDS[m.kind]) return 'Unknown mission.';
+    if (sq.kind === 'fighter' && isBombMission(m.kind)) return `${sq.name} is a fighter squadron; it cannot fly bombing missions.`;
+    if (sq.kind === 'bomber' && !isBombMission(m.kind)) return `${sq.name} is a bomber squadron; give it a bombing mission.`;
+    if (sq.kind !== 'fighter' && sq.kind !== 'bomber') return `${sq.name}: only fighter and bomber missions are in the game so far.`;
     if (m.kind === 'scramble') continue;
     const hex = typeof m.hex === 'string' ? hexFromName(m.hex) : null;
     if (!hex || !map.tiles[key(...hex)] || map.tiles[key(...hex)].t === 'sea') return `${sq.name}: give a land hex such as C4807 for the target.`;
@@ -139,7 +196,7 @@ function baseBlocked(sq, base, ctx) {
 function eligiblePlanes(sq, kind, target, ctx) {
   const fac = ctx.air.facilities.find((f) => f.id === sq.facility);
   const base = fac && facilityHex(fac);
-  if (!base) return null;
+  if (!base || fac.cap < 1) return null;
   if (baseBlocked(sq, base, ctx)) return null;
   if (sandOrRain(ctx, base) || sandOrRain(ctx, target)) return null;
   const d = distance(base, target);
@@ -147,16 +204,17 @@ function eligiblePlanes(sq, kind, target, ctx) {
   return planes.length ? { base, planes, d } : null;
 }
 
-const eff = (p) => (p.armed ? planeInfo(p).tac + (p.pilot || 0) : 0);
+const eff = (p, bonus = 0) => (p.armed ? planeInfo(p).tac + (p.pilot || 0) + bonus : 0);
 
 // One duel between an attacking and a defending fighter [45.2-45.3]. Returns the plane that was shot down, or null.
 function duel(a, d, ctx) {
-  const A = planeInfo(a.p), D = planeInfo(d.p);
+  const A = { ...planeInfo(a.p), man: manOf(a.p) }, D = { ...planeInfo(d.p), man: manOf(d.p) };
   const adj = maneuverAdjustment(Math.abs(A.man - D.man));
-  const base = eff(a.p) - eff(d.p);
+  const base = eff(a.p, a.bonus || 0) - eff(d.p, d.bonus || 0);
   const diffA = base + (A.man > D.man ? adj : A.man < D.man ? -adj : 0);
   const diffD = -base + (D.man > A.man ? adj : D.man < A.man ? -adj : 0);
-  const order = diffD < diffA ? [[d, a, diffD], [a, d, diffA]] : [[a, d, diffA], [d, a, diffD]]; // the weaker differential fires first
+  // The weaker differential fires first; a bomber (parenthesised TacAir) may only fire back [41.15].
+  const order = D.paren || (!A.paren && diffD >= diffA) ? [[a, d, diffA], [d, a, diffD]] : [[d, a, diffD], [a, d, diffA]];
   for (const [shooter, target, diff] of order) {
     const n = killNumber(diff);
     const roll = rollD66(ctx);
@@ -171,8 +229,54 @@ function recover(ent, ctx) {
   const r = ctx.d6();
   if (r === 1) { p.ready = false; p.fueled = false; p.armed = false; return 'limped home'; }
   sq.planes.splice(sq.planes.indexOf(p), 1);
+  if (p.pilot == null) return 'plane lost';
   if (r === 2) { if (p.pilot > 0) ctx.air.returning.push({ sq: sq.id, rating: p.pilot, turn: ctx.turn + 1 }); return 'plane lost, pilot rescued'; }
   return 'plane and pilot lost';
+}
+
+
+// Apply one bombing mission's result to its target hex.
+function bombTarget(f, tons, n, ctx, say) {
+  const side = f.side, hex = f.hex, enemy = other(side);
+  const where = hexName(hex);
+  const tag = `${sideName(side)} bombers (${n} planes, ${tons} tons) over ${where}`;
+  const col = bombColumn(tons);
+  if (!n) return;
+  const roll = rollD66(ctx);
+  if (f.kind === 'bCU') {
+    if (ctx.map.tiles[key(...hex)]?.t === 'majorcity') { say(`${tag}: units in a major city cannot be bombed.`); return; }
+    const targets = ctx.units.filter((u) => u.side === enemy && u.str > 0 && u.type !== 'hq' && u.pos[0] === hex[0] && u.pos[1] === hex[1]);
+    if (!targets.length) { say(`${tag}: no enemy troops there.`); return; }
+    let points = bombResult(PIN_ROWS, col, roll);
+    const els = targets.flatMap((u) => u.elements.filter((e) => e.toe > 0 && ctx.weapons[e.w]));
+    let pinned = 0;
+    for (let guard = 0; points > 0 && guard < 50; guard++) {
+      const open = els.filter((e) => e.toe - (e.airPin || 0) > 0);
+      if (!open.length) break;
+      const e = open[(ctx.d6() - 1) % open.length];
+      const w = ctx.weapons[e.w];
+      e.airPin = Math.min(e.toe, (e.airPin || 0) + (w.bn || e.toe));
+      points -= w.class === 'infantry' ? 1 : 2; // each tank or gun battalion counts for two [41.31]
+      pinned++;
+    }
+    say(`${tag} (d66 ${roll}): ${pinned ? `${pinned} enemy battalion-sized group${pinned > 1 ? 's' : ''} pinned.` : 'no effect.'}`);
+  } else if (f.kind === 'bSD') {
+    const dumps = ctx.supplyUnitsAt(hex, enemy);
+    if (!dumps.length) { say(`${tag}: no supply dump there.`); return; }
+    const pct = bombResult(DUMP_ROWS, col, roll);
+    for (const d of dumps) { d.ammo = Math.floor(d.ammo * (1 - pct / 100)); d.fuel = Math.floor(d.fuel * (1 - pct / 100)); }
+    say(`${tag} (d66 ${roll}): ${pct}% of the supplies in the dump destroyed.`);
+  } else if (f.kind === 'bAF') {
+    const fac = ctx.air.facilities.find((x) => x.owner === enemy && x.hex && facilityHex(x) && key(...facilityHex(x)) === key(...hex));
+    if (!fac) { say(`${tag}: no enemy air facility there.`); return; }
+    const lv = Math.min(fac.cap, bombResult(FAC_ROWS, col, roll));
+    fac.cap -= lv;
+    const here = ctx.air.squadrons.filter((q) => q.facility === fac.id).flatMap((q) => q.planes.map((p) => ({ q, p })));
+    here.sort((a, b) => (a.p.ready ? 1 : 0) - (b.p.ready ? 1 : 0));
+    const lost = Math.floor((here.length * 10 * lv) / 100);
+    for (const { q, p } of here.slice(0, lost)) q.planes.splice(q.planes.indexOf(p), 1);
+    say(`${tag} (d66 ${roll}): ${fac.name} reduced by ${lv} level${lv === 1 ? '' : 's'}${lost ? `, ${lost} planes destroyed on the ground` : ''}.`);
+  }
 }
 
 export function resolveAir(g, orders, ctx) {
@@ -190,7 +294,8 @@ export function resolveAir(g, orders, ctx) {
       const target = hexFromName(m.hex);
       const fl = eligiblePlanes(sq, m.kind, target, ctx);
       if (!fl) { ctx.log(side, `${sq.name} could not fly its mission (no ready, fuelled planes in range, bad weather, or enemy troops beside the base).`); continue; }
-      flights.push({ sq, side, kind: m.kind, hex: target, planes: fl.planes.map((p) => ({ sq, p, side })) });
+      const bonus = isBombMission(m.kind) ? (fl.planes.length >= 18 ? 2 : fl.planes.length >= 6 ? 1 : 0) : 0; // bomber formation bonus [45.7]
+      flights.push({ sq, side, kind: m.kind, hex: target, planes: fl.planes.map((p) => ({ sq, p, side, bonus })) });
     }
   }
   // 2. Scramble: a standby squadron sees the nearest incoming enemy flight within 15 hexes and rolls to meet it [40.3].
@@ -212,7 +317,8 @@ export function resolveAir(g, orders, ctx) {
   const flown = new Set(flights.flatMap((f) => f.planes.map((e) => e.p)));
   // 3. Air-to-air combat, hex by hex [45].
   const down = new Set();
-  const fighting = (hexKey, side) => flights.filter((f) => key(...f.hex) === hexKey && f.side === side && f.kind !== 'strafe').flatMap((f) => f.planes).filter((e) => !down.has(e.p));
+  const fighting = (hexKey, side) => flights.filter((f) => key(...f.hex) === hexKey && f.side === side && f.kind !== 'strafe' && !isBombMission(f.kind)).flatMap((f) => f.planes).filter((e) => !down.has(e.p));
+  const raiders = (hexKey, side) => flights.filter((f) => key(...f.hex) === hexKey && f.side === side && (f.kind === 'strafe' || isBombMission(f.kind))).flatMap((f) => f.planes).filter((e) => !down.has(e.p));
   const strafers = (hexKey, side) => flights.filter((f) => key(...f.hex) === hexKey && f.side === side && f.kind === 'strafe').flatMap((f) => f.planes).filter((e) => !down.has(e.p));
   const hexes = [...new Set(flights.map((f) => key(...f.hex)))];
   const fight = (att, def, what) => {
@@ -240,9 +346,9 @@ export function resolveAir(g, orders, ctx) {
         if (d) fight(a, d, where);
       });
     }
-    // Wave 2: fighters left over attack strafers that have no fighter cover of their own.
+    // Wave 2: fighters left over attack strafers and bombers that have no fighter cover of their own.
     for (const side of ['axis', 'cw']) {
-      const sts = strafers(hk, side);
+      const sts = raiders(hk, side);
       if (!sts.length || fighting(hk, side).length) continue;
       const hunters = fighting(hk, other(side));
       hunters.forEach((h, i) => {
@@ -279,6 +385,12 @@ export function resolveAir(g, orders, ctx) {
       }
       say(`${sideName(side)} strafing of ${where} (${tac} TacAir, d66 ${roll}): ${done ? `${done} TOE point${done > 1 ? 's' : ''} of infantry eliminated.` : 'no effect.'}`);
     }
+  }
+  // 4b. Bombing by the surviving bombers [41.2-41.3]. Flak is not in the game yet.
+  for (const f of flights.filter((x) => isBombMission(x.kind))) {
+    const live = f.planes.filter((e) => !down.has(e.p));
+    const tons = live.reduce((n, e) => n + planeInfo(e.p).bomb, 0);
+    bombTarget(f, tons, live.length, ctx, say);
   }
   // 5. Planes that flew need refitting, fuelling and arming again [38].
   for (const p of flown) { p.ready = false; p.fueled = false; p.armed = false; }

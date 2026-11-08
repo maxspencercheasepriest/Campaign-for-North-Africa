@@ -233,3 +233,69 @@ test('starting troops option: strong brings the first 12 turns of reinforcements
   assert.ok(!hist.units.some((u) => u.id === 'cw-1fa'));
   void count;
 });
+
+test('air game stage 3: bombardment table lookups [41.5]', async () => {
+  const a = await import('../src/server/air.js');
+  const T = a.BOMB_TABLES;
+  assert.equal(a.bombColumn(20), 0);
+  assert.equal(a.bombColumn(21), 1);
+  assert.equal(a.bombColumn(500), 10);
+  assert.equal(a.bombResult(T.pin, a.bombColumn(100), 65), 2);
+  assert.equal(a.bombResult(T.pin, a.bombColumn(10), 63), 1);
+  assert.equal(a.bombResult(T.pin, a.bombColumn(10), 62), 0);
+  assert.equal(a.bombResult(T.facility, a.bombColumn(500), 66), 4);
+  assert.equal(a.bombResult(T.facility, a.bombColumn(30), 66), 1);
+  assert.equal(a.bombResult(T.dump, a.bombColumn(500), 66), 75);
+  assert.equal(a.bombResult(T.dump, a.bombColumn(10), 11), 0);
+  assert.equal(a.bombResult(T.dump, a.bombColumn(0), 66), 0);
+});
+
+test('air game stage 3: bomber orders are checked, and bombers over a target meet fighters', async () => {
+  const { hexFromName } = await import('../src/shared/hexnames.js');
+  let met = false, bombed = false;
+  for (let seed = 1; seed <= 8 && !(met && bombed); seed++) {
+    const g = createGame({ seed, air: 'on' });
+    submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
+    submitOrders(g, g.initiative.holder, { goFirst: true });
+    const unit = g.units.find((u) => u.side === 'axis' && u.type !== 'hq' && u.str > 0);
+    unit.pos = hexFromName('C4218');
+    const bombers = g.air.squadrons.filter((s) => s.side === 'cw' && s.kind === 'bomber');
+    for (const s of bombers) s.facility = 'matruh';
+    const sq = bombers.find((s) => s.planes.some((p) => p.ready && p.fueled && p.armed));
+    const ax = g.air.squadrons.find((s) => s.side === 'axis' && s.kind === 'fighter' && s.planes.some((p) => p.ready && p.fueled && p.armed));
+    assert.match(submitOrders(g, 'cw', { missions: [{ sq: sq.id, kind: 'strafe', hex: 'C4218' }] }), /bomber squadron/);
+    assert.match(submitOrders(g, 'cw', { missions: [{ sq: g.air.squadrons.find((s) => s.side === 'cw' && s.kind === 'fighter').id, kind: 'bCU', hex: 'C4218' }] }), /fighter squadron/);
+    submitOrders(g, 'axis', { missions: [{ sq: ax.id, kind: 'capD', hex: 'C4218' }] });
+    assert.equal(submitOrders(g, 'cw', { missions: [{ sq: sq.id, kind: 'bCU', hex: 'C4218' }] }), null);
+    const text = g.log.map((l) => l.text).join('\n');
+    if (/Air combat/.test(text)) met = true;
+    if (/Commonwealth bombers/.test(text)) bombed = true;
+  }
+  assert.ok(met, 'Axis fighters attacked the bombers');
+  assert.ok(bombed, 'some bombers reached the target and dropped their load');
+});
+
+test('air game stage 3: bombing an air facility cuts its capacity and destroys planes on the ground', async () => {
+  const a = await import('../src/server/air.js');
+  const { hexFromName } = await import('../src/shared/hexnames.js');
+  const g = createGame({ seed: 3, air: 'on' });
+  const fac = g.air.facilities.find((f) => f.id === 'eladem');
+  const before = fac.cap;
+  const planesBefore = g.air.squadrons.filter((s) => s.facility === 'eladem').reduce((n, s) => n + s.planes.length, 0);
+  assert.ok(planesBefore >= 10);
+  const sq = g.air.squadrons.find((s) => s.side === 'cw' && s.kind === 'bomber' && s.planes.length >= 8);
+  sq.facility = 'matruh';
+  for (const s of g.air.squadrons) for (const p of s.planes) { p.ready = p.fueled = p.armed = false; }
+  for (const p of sq.planes.slice(0, 8)) { p.ready = p.fueled = p.armed = true; }
+  // Every die shows 6, so the d66 roll is 66: 40 tons of bombs take one level off an airfield.
+  const ctx = {
+    map: { tiles: {} }, units: [], weapons: {}, d6: () => 6, log: () => {}, supplyUnitsAt: () => [], supplyAt: () => false,
+    weatherAt: () => 'normal', turn: 1, opStage: 1, firstTurn: 1, holder: 'cw',
+  };
+  a.resolveAir(g, { cw: { missions: [{ sq: sq.id, kind: 'bAF', hex: 'C4507' }] }, axis: {} }, ctx);
+  assert.equal(fac.cap, before - 1);
+  const planesAfter = g.air.squadrons.filter((s) => s.facility === 'eladem').reduce((n, s) => n + s.planes.length, 0);
+  assert.equal(planesBefore - planesAfter, Math.floor(planesBefore * 0.1));
+  a.repairFacilities(g.air);
+  assert.equal(fac.cap, before, 'one level is repaired each Game-Turn');
+});

@@ -429,22 +429,24 @@ function obligationList() {
 
 function airForm() {
   draft.missions ||= [];
-  const sqs = (S.game.air?.squadrons || []).filter((q) => q.kind === 'fighter');
+  const sqs = (S.game.air?.squadrons || []).filter((q) => q.kind === 'fighter' || q.kind === 'bomber');
   const cur = (id) => draft.missions.find((m) => m.sq === id) || { kind: '', hex: '' };
   const rows = sqs.map((q) => {
     const m = cur(q.id);
     return `<li><b>${esc(q.name)}</b> <span class="muted">at ${esc(q.facility)}: ${q.fueled} fuelled, ${q.armed} armed of ${q.ready} ready</span><br>
       <select data-am="kind" data-sq="${q.id}"><option value="">Stay on the ground</option>
-        <option value="scramble" ${m.kind === 'scramble' ? 'selected' : ''}>Scramble against raiders</option>
+        ${q.kind === 'bomber' ? `<option value="bCU" ${m.kind === 'bCU' ? 'selected' : ''}>Bomb troops in…</option>
+        <option value="bSD" ${m.kind === 'bSD' ? 'selected' : ''}>Bomb a supply dump in…</option>
+        <option value="bAF" ${m.kind === 'bAF' ? 'selected' : ''}>Bomb an air facility in…</option>` : `<option value="scramble" ${m.kind === 'scramble' ? 'selected' : ''}>Scramble against raiders</option>
         <option value="capO" ${m.kind === 'capO' ? 'selected' : ''}>Offensive patrol over…</option>
         <option value="capD" ${m.kind === 'capD' ? 'selected' : ''}>Defensive patrol over…</option>
-        <option value="strafe" ${m.kind === 'strafe' ? 'selected' : ''}>Strafe enemy troops in…</option></select>
+        <option value="strafe" ${m.kind === 'strafe' ? 'selected' : ''}>Strafe enemy troops in…</option>`}</select>
       <input data-am="hex" data-sq="${q.id}" size="6" placeholder="C4807" value="${esc(m.hex || '')}"></li>`;
   }).join('');
   const st = S.game.air?.stock;
-  return `<p class="help">Fighters fly, fight and strafe this phase. A squadron needs refitted, fuelled planes within range; armed planes hit hard, unarmed ones do not. Planes that fly must be refitted, fuelled and armed again. Bombing missions are not in the game yet.</p>
+  return `<p class="help">Fighters fly, fight and strafe this phase. A squadron needs refitted, fuelled planes within range; armed planes hit hard, unarmed ones do not. Bombers need armed planes: tons delivered set the damage. Fighters over the target can shoot bombers down, so send an offensive patrol to the same hex. Planes that fly must be refitted, fuelled and armed again. Flak is not in the game yet.</p>
     ${st ? `<p class="muted">Air stocks: ${st.ammo} Ammo, ${st.fuel} Fuel, ${st.stores} Stores.</p>` : ''}
-    <ul class="orders">${rows || '<li class="muted">You have no fighter squadrons.</li>'}</ul>`;
+    <ul class="orders">${rows || '<li class="muted">You have no fighter or bomber squadrons.</li>'}</ul>`;
 }
 
 function trucksForm() {

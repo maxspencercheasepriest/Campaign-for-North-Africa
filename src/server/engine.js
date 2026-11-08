@@ -15,7 +15,7 @@
 import { REINFORCEMENTS } from '../shared/reinforcements.js';
 import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
-import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots } from './air.js';
+import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities } from './air.js';
 import {
   SIDES, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
   buildMap, initialUnits, initialSupply, initialPortOwners, VISION_RANGE,
@@ -143,6 +143,7 @@ function startGameTurn(g) {
   g.order = null;
   g.half = null;
   returnPilots(g.air, g.turn);
+  if (g.turn > scenarioOf(g).firstTurn) repairFacilities(g.air);
   setStep(g, 'convoy');
 }
 
@@ -168,7 +169,7 @@ export const weatherAt = (g, hex) => localWeather(g.weather, gameMap(), hex);
 
 function startOpStage(g, n) {
   g.opStage = n;
-  for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; u.fuelPaid = false; u.reserve = 0; u.relFrom = 0; u.relCap = null; u.assaults = 0; u.resDp = false; }
+  for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; u.fuelPaid = false; u.reserve = 0; u.relFrom = 0; u.relCap = null; u.assaults = 0; u.resDp = false; for (const e of u.elements || []) e.airPin = 0; }
   resetMoved(g.supply);
   convoyArrivalPhase(g);
   rollWeather(g);
@@ -373,6 +374,7 @@ function resolveAirPhase(g, orders) {
     d6: () => d6(g), log: (side, text) => log(g, side, text), map, units: g.units, weapons: WEAPONS,
     turn: g.turn, opStage: g.opStage, firstTurn: scenarioOf(g).firstTurn, holder: g.initiative.holder,
     weatherAt: (hex) => weatherAt(g, hex),
+    supplyUnitsAt: (hex, side) => g.supply.units.filter((x) => x.side === side && x.pos[0] === hex[0] && x.pos[1] === hex[1]),
     supplyAt: (hex, side) => g.supply.units.some((x) => x.side === side && x.pos[0] === hex[0] && x.pos[1] === hex[1]),
   };
   resolveAir(g, orders, ctx);

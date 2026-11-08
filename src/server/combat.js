@@ -93,6 +93,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
   const att = flat(attackers);
   const def = flat(defenders);
   const pinned = new Map(); // element handle -> TOE points pinned (one battalion-sized target each time)
+  for (const x of [...att, ...def]) if (x.e.airPin > 0) pinned.set(x, Math.min(x.e.toe, x.e.airPin)); // pinned from the air earlier this stage [41.9]
   const pin = (x) => pinned.set(x, Math.min(x.e.toe, (pinned.get(x) || 0) + (W(x.e).bn || x.e.toe)));
 
   // Roles.

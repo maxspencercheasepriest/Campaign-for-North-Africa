@@ -67,7 +67,7 @@ export function stepHelp(game, { side, canAct }) {
         ...watch,
       ]);
     case 'air':
-      return out('Land Support Air Phase', ['Give each fighter squadron a job: offensive patrol over a target hex, defensive patrol over your own, strafing of enemy infantry, or stand by to scramble when raiders come near its base. Type the target hex as a name like C4807.', 'Fighters meet in the air before they strafe. Planes that fly need refitting, fuelling and arming again afterwards, which uses your air Stores, Fuel and Ammo.', ...watch]);
+      return out('Land Support Air Phase', ['Give each fighter squadron a job (bomber squadrons bomb troops, supply dumps or air facilities): offensive patrol over a target hex, defensive patrol over your own, strafing of enemy infantry, or stand by to scramble when raiders come near its base. Type the target hex as a name like C4807.', 'Fighters meet in the air before they strafe. Planes that fly need refitting, fuelling and arming again afterwards, which uses your air Stores, Fuel and Ammo.', ...watch]);
     case 'declare':
       return out('Initiative', ['The side holding the Initiative decides whether to move first (Player A) or last (Player B) this Operations Stage.', 'Going last in one stage and first in the next gives you two phases in a row.', ...watch]);
     case 'movecombat': {
