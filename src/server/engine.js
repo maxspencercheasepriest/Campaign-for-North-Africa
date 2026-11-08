@@ -818,10 +818,12 @@ function actAttack(g, side, a) {
   const snap = JSON.parse(JSON.stringify(g.supply.units));
   const sctx = supplyCtx(g, side);
   for (const u of attackers) {
-    const cost = ammoCost(u, true);
+    const cost = ammoCost(u, true, { probe: !!a.probe });
     if (!draw(g.supply, sctx, u, 'ammo', cost)) {
       g.supply.units = snap;
-      return `${u.name} needs ${cost} Ammo from a supply unit within ${u.cpa / 2} CP to attack [32.21].`;
+      const have = Math.floor(suppliesInRange(g.supply, sctx, u).reduce((t, x) => t + x.ammo, 0));
+      const why = have ? `only ${have} in reach` : (supplyDiagnosis(g.supply, sctx, u, { needAmmo: true, ammoNeed: cost }) || 'none in reach');
+      return `${u.name} needs ${cost} Ammo to ${a.probe ? 'probe' : 'attack'} (${why}). ${a.probe ? '' : 'A probe costs only 2. '}Supply units must be within ${u.cpa / 2} CP [32.21].`;
     }
     u.ammo = 1;
   }

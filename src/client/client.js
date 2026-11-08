@@ -400,11 +400,11 @@ function combatList() {
       const done = attackedHexes.has(key(...e.pos));
       return `<div class="attack"><b>${esc(e.name)}</b> <span class="muted">(${e.str} TOE, ${esc(TERRAIN[t.t].label)})</span>
         ${done ? '<span class="muted">Already attacked this segment.</span>' : `
-        ${adj.map((u) => `<label class="check"><input type="checkbox" data-att="${e.id}" value="${u.id}" checked> ${esc(u.name)} (${u.str} TOE, cohesion ${u.cohesion}${u.ammo ? '' : ', no ammo!'})</label>`).join('')}
+        ${adj.map((u) => `<label class="check"><input type="checkbox" data-att="${e.id}" value="${u.id}" checked> ${esc(u.name)} (${u.str} TOE, cohesion ${u.cohesion}, <span class="${u.ammoAvail >= u.ammoNeed ? '' : 'bad'}">ammo ${Math.floor(u.ammoAvail)}/${u.ammoNeed} for a full attack</span>${u.ammoAvail >= 2 ? '' : ', <span class="bad">too little even to probe</span>'})</label>`).join('')}
         <div class="opts">
           <label class="check"><input type="checkbox" data-opt-fwd="${e.id}" checked> Artillery forward <span class="muted">(fires together and joins the assault, but is exposed)</span></label>
           <label class="check"><input type="checkbox" data-opt-at="${e.id}"> Tanks fire anti-armour <span class="muted">(instead of joining the close assault)</span></label>
-          <label class="check"><input type="checkbox" data-opt-probe="${e.id}"> Probe only <span class="muted">(2 CP, no Engaged result)</span></label>
+          <label class="check"><input type="checkbox" data-opt-probe="${e.id}"> Probe only <span class="muted">(2 CP, 2 Ammo each, no Engaged result)</span></label>
         </div>
         <button class="act" data-attack="${e.id}">Attack</button>`}</div>`;
     }).join('') + lastCombatReport();

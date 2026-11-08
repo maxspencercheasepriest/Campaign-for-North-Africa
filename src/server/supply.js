@@ -50,7 +50,8 @@ export function fuelNeed(u) {
   return 2 * Math.ceil(tanks - 1e-9) + (other > 0 ? Math.ceil(other - 1e-9) : 0) || (u.elements?.length ? 1 : 0);
 }
 // Ammo: a non-phasing battalion-equivalent pays 1 for an assault and 2 for a barrage; the phasing side pays double.
-export function ammoCost(u, phasing, { barrage = true } = {}) {
+export function ammoCost(u, phasing, { barrage = true, probe = false } = {}) {
+  if (probe) return phasing ? 2 : 1; // a probe uses one battalion-equivalent, no barrage [3.1 Probe; 32.21]
   let art = 0, rest = 0;
   for (const e of u.elements || []) {
     const w = WEAPONS[e.w];

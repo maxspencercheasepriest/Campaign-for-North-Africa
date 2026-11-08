@@ -125,3 +125,11 @@ test('a unit with some ammo in reach but less than an attack costs is told why',
   assert.ok(u.ammoNeed > 0 && u.ammoAvail < u.ammoNeed);
   assert.match(u.supplyNote, /supply unit/);
 });
+
+test('a probe costs far less ammunition than a full attack', async () => {
+  const { ammoCost } = await import('../src/server/supply.js');
+  const g = createGame({ seed: 1 });
+  const u = g.units.find((x) => x.id === 'it-63');
+  assert.equal(ammoCost(u, true, { probe: true }), 2);
+  assert.ok(ammoCost(u, true) > 2);
+});
