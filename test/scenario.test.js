@@ -88,3 +88,12 @@ test('reinforcements arrive in the Arrival Phase of the stage the schedule names
   submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
   assert.equal(g.units.length, before, 'not yet: Rommel is due in stage 2');
 });
+
+test('a unit with some ammo in reach but less than an attack costs is told why', async () => {
+  const { createGame, viewFor } = await import('../src/server/engine.js');
+  const g = createGame({ seed: 1 });
+  const u = viewFor(g, 'cw').units.find((x) => x.supplyNote);
+  assert.ok(u, 'someone starts out of supply');
+  assert.ok(u.ammoNeed > 0 && u.ammoAvail < u.ammoNeed);
+  assert.match(u.supplyNote, /supply unit/);
+});

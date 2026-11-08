@@ -18,7 +18,7 @@ import {
   buildMap, initialUnits, initialSupply, initialPortOwners, REINFORCEMENTS, VISION_RANGE,
 } from '../shared/scenario.js';
 import {
-  createSupply, supplyReach, suppliesInRange, fuelNeed, ammoCost, draw, drawHere, available, captureAt, hotWeatherLoss, planArrivals,
+  createSupply, supplyDiagnosis, supplyReach, suppliesInRange, fuelNeed, ammoCost, draw, drawHere, available, captureAt, hotWeatherLoss, planArrivals,
   receiveArrivals, scheduleConvoys, landConvoys, convoyList, moveSupply, resetMoved, axisConvoyLevel, cwSupplyPeriod,
   MAX_PER_CONVOY_LANE,
 } from './supply.js';
@@ -946,7 +946,13 @@ export function viewFor(g, side) {
   for (const x of g.supply.units.filter((y) => y.side !== side && seen(y.pos))) supply.push({ id: x.id, side: x.side, pos: x.pos, own: false });
   const ownView = own.map((u) => {
     const src = suppliesInRange(g.supply, sctx, u);
-    return { ...u, fuelNeed: fuelNeed(u), fuelAvail: src.reduce((a, x) => a + x.fuel, 0), ammoAvail: src.reduce((a, x) => a + x.ammo, 0) };
+    const need = fuelNeed(u), fuel = src.reduce((a, x) => a + x.fuel, 0), ammo = src.reduce((a, x) => a + x.ammo, 0);
+    const ammoNeed = isCombatUnit(u) ? ammoCost(u, true) : 0;
+    const lacking = { needFuel: need > fuel, needAmmo: ammoNeed > ammo, ammoNeed };
+    return {
+      ...u, fuelNeed: need, fuelAvail: fuel, ammoAvail: ammo, ammoNeed,
+      ...((lacking.needFuel || lacking.needAmmo) ? { supplyNote: supplyDiagnosis(g.supply, sctx, u, lacking) } : {}),
+    };
   });
   const obligations = g.step === 'movecombat' && phasingSide(g) === side
     ? attackObligations(g, side).filter((o) => seen(o.enemy.pos)).map((o) => ({ enemyId: o.enemy.id, hex: key(...o.enemy.pos), met: g.seg.attacked.includes(key(...o.enemy.pos)) }))

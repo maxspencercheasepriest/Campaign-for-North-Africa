@@ -87,6 +87,26 @@ export function suppliesInRange(sup, ctx, u) {
     .map((x) => x.s);
 }
 
+// Plain-language reason a unit cannot draw what it needs [32.16, 32.2], or null if it is supplied.
+export function supplyDiagnosis(sup, ctx, u, { needFuel, needAmmo, ammoNeed = 1 }) {
+  const mine = sup.units.filter((s) => s.side === u.side);
+  const what = [needFuel && 'fuel', needAmmo && 'ammunition'].filter(Boolean).join(' and ');
+  if (!what) return null;
+  if (!mine.length) return `No ${what} in reach: you have no supply units left in the field.`;
+  const budget = u.cpa / 2;
+  const hexName = (s) => nameOfHex(...s.pos);
+  const near = suppliesInRange(sup, ctx, u);
+  if (near.length) return `Not enough ${what}${needAmmo ? ` (an attack costs ${ammoNeed} Ammo)` : ''}: the supply unit${near.length > 1 ? 's' : ''} within ${budget} CP (${near.map(hexName).join(', ')}) ${near.length > 1 ? 'hold' : 'holds'} only ${Math.floor(near.reduce((a, x) => a + x.ammo, 0))} ammo and ${Math.floor(near.reduce((a, x) => a + x.fuel, 0))} fuel.`;
+  const closeBy = mine.filter((s) => distance(u.pos, s.pos) <= budget * 2);
+  if (closeBy.length) {
+    const open = costsFrom({ ...ctx, zocBlocked: null, enemyHexes: new Set() }, u.side, u.pos, budget, { motorised: u.motorised });
+    const cut = closeBy.find((s) => open.has(key(...s.pos)));
+    if (cut) return `No ${what} in reach: the supply unit at ${hexName(cut)} is close enough but the route runs through enemy zones of control or hexes held by the enemy [32.16].`;
+  }
+  const best = mine.map((s) => ({ s, d: distance(u.pos, s.pos) })).sort((a, b) => a.d - b.d)[0];
+  return `No ${what} in reach: the nearest supply unit is at ${hexName(best.s)}, ${best.d} hexes away; this unit can only draw from supply units within ${budget} CP (half its CPA). Move supply units forward in the Truck Convoy Phase.`;
+}
+
 export function available(sup, ctx, u, res) {
   return suppliesInRange(sup, ctx, u).reduce((a, s) => a + s[res], 0);
 }

@@ -132,3 +132,33 @@ test('static client files are served', async () => {
   assert.equal((await fetch(srv.url + '/../server/server.js')).status, 404);
   await srv.close();
 });
+
+test('the host can remove a player (for example one who has gone away) from a seat, but nobody else can', async () => {
+  const savePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-')), 'save.json');
+  const srv = await startServer({ port: 0, savePath });
+  const host = client(srv.url, 'Flick', srv.hostToken);
+  const ben = client(srv.url, 'Ben');
+  const dave = client(srv.url, 'Dave');
+  await Promise.all([host.ready, ben.ready, dave.ready]);
+  await settle();
+  host.send({ type: 'claim', side: 'cw', role: 'cic' });
+  ben.send({ type: 'claim', side: 'axis', role: 'cic' });
+  dave.send({ type: 'claim', side: 'axis', role: 'front' });
+  await settle();
+  const benId = host.state.players.find((p) => p.name === 'Ben').id;
+  const daveId = host.state.players.find((p) => p.name === 'Dave').id;
+  dave.send({ type: 'kick', playerId: benId }); // not the host: ignored
+  await settle();
+  assert.equal(host.state.players.find((p) => p.id === benId).side, 'axis');
+  host.send({ type: 'kick', playerId: benId });
+  await settle();
+  assert.equal(host.state.players.find((p) => p.id === benId).side, null, 'Ben is out of his seat');
+  assert.equal(ben.state.you.side, null);
+  host.send({ type: 'kick', playerId: host.state.you.id }); // the host cannot remove himself
+  await settle();
+  assert.equal(host.state.you.side, 'cw');
+  dave.send({ type: 'claim', side: 'axis', role: 'cic' }); // the vacated seat can be taken
+  await settle();
+  assert.equal(host.state.players.find((p) => p.id === daveId).role, 'cic');
+  await srv.close();
+});

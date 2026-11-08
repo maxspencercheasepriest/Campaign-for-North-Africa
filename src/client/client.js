@@ -381,8 +381,9 @@ function unitCard(u) {
   const moved = S.game.seg?.moved?.includes(u.id);
   return `<div class="unitcard"><b>${esc(u.name)}</b><br>
     CPA ${u.cpa} · used ${fmtCP(u.cpUsed)}${u.cpa <= 10 ? ` (foot: max ${u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT})` : ''} · cohesion <b class="${u.cohesion < 0 ? 'bad' : ''}">${u.cohesion}</b><br>
-    Morale ${u.morale > 0 ? '+' : ''}${u.morale} · TOE ${u.str}/${u.maxStr}${u.fuelNeed ? ` · fuel ${Math.floor(u.fuelAvail)}/${u.fuelNeed}` : ''} · ammo in reach ${Math.floor(u.ammoAvail)}${u.motorised ? ` · breakdown pts ${fmtCP(u.bp)}` : ''}
+    Morale ${u.morale > 0 ? '+' : ''}${u.morale} · TOE ${u.str}/${u.maxStr}${u.fuelNeed ? ` · fuel ${Math.floor(u.fuelAvail)}/${u.fuelNeed}` : ''} · ammo in reach ${Math.floor(u.ammoAvail)}${u.ammoNeed ? `/${u.ammoNeed} to attack` : ""}${u.motorised ? ` · breakdown pts ${fmtCP(u.bp)}` : ''}
     <br><span class="muted">${(u.elements || []).map((e) => `${e.toe}× ${esc(e.w)}`).join(' · ')}</span>
+    ${u.supplyNote ? `<br><span class="bad">${esc(u.supplyNote)}</span>` : ''}
     ${u.reserve ? `<br><b>In Reserve ${u.reserve === 1 ? 'I (may move one hex)' : 'II (may not move)'}.</b>` : u.relFrom ? `<br><span class="muted">Released from Reserve ${u.relFrom === 1 ? 'I' : 'II'}: max ${u.relCap} CP, one assault.</span>` : ''}
     ${frozen ? '<br><span class="bad">Cannot move again this phase.</span>' : moved ? '<br><span class="muted">Already moved this segment.</span>' : ''}</div>`;
 }
@@ -490,7 +491,8 @@ function renderSupply() {
   const sup = (g.supply || []).filter((x) => x.own);
   const v = g.victory;
   el.innerHTML = `<h3>Formations</h3><table class="grid"><tr><th>Unit</th><th>CP</th><th>Coh</th><th>Str</th><th>Fuel need</th><th>Fuel</th><th>Ammo</th></tr>
-    ${myUnits().map((u) => `<tr class="${u.cohesion <= -10 || (u.fuelNeed > u.fuelAvail) ? 'warn' : ''}"><td>${esc(u.name)}</td><td>${fmtCP(u.cpUsed)}/${u.cpa}</td><td>${u.cohesion}</td><td>${u.str}/${u.maxStr}</td><td>${u.fuelNeed || '–'}</td><td>${n(u.fuelAvail)}</td><td>${n(u.ammoAvail)}</td></tr>`).join('')}</table>
+    ${myUnits().map((u) => `<tr class="${u.cohesion <= -10 || (u.fuelNeed > u.fuelAvail) ? 'warn' : ''}"><td>${esc(u.name)}</td><td>${fmtCP(u.cpUsed)}/${u.cpa}</td><td>${u.cohesion}</td><td>${u.str}/${u.maxStr}</td><td>${u.fuelNeed || '–'}</td><td>${n(u.fuelAvail)}</td><td>${n(u.ammoAvail)}${u.ammoNeed ? `/${u.ammoNeed}` : ""}</td></tr>`).join('')}</table>
+    ${myUnits().filter((u) => u.supplyNote).map((u) => `<p class="bad"><b>${esc(u.name)}:</b> ${esc(u.supplyNote)}</p>`).join('')}
     <h3>Supply units</h3><table class="grid"><tr><th>Where</th><th>Ammo</th><th>Fuel</th></tr>
     ${sup.map((x) => `<tr><td>${esc(hexLabel(key(...x.pos)))}</td><td>${n(x.ammo)}</td><td>${n(x.fuel)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None in the field.</td></tr>'}</table>
     ${mySide() === 'axis' ? `<p>Waiting in Tripoli: <b>${g.box}</b> supply unit${g.box === 1 ? '' : 's'}.</p>` : ''}
@@ -514,9 +516,15 @@ function seatGrid() {
       const seat = document.createElement('button');
       seat.className = `seat ${p ? 'taken' : ''} ${mine ? 'mine' : ''}`;
       seat.innerHTML = `<span class="role">${ROLE_NAMES[role]}</span><span class="who">${p ? esc(p.name) + (p.connected ? '' : ' (away)') : 'vacant — take this seat'}</span>`;
-      seat.disabled = !!p && !mine;
-      seat.onclick = () => (mine ? send({ type: 'leaveSeat' }) : send({ type: 'claim', side, role }));
+      const hostCanRemove = !!p && !mine && S.you.isHost;
+      seat.disabled = !!p && !mine && !hostCanRemove;
+      seat.onclick = () => {
+        if (mine) return send({ type: 'leaveSeat' });
+        if (hostCanRemove) { if (confirm(`Remove ${p.name}${p.connected ? '' : ' (away)'} from the ${ROLE_NAMES[role]} seat? Their seat becomes vacant and can be taken by someone else.`)) send({ type: 'kick', playerId: p.id }); return; }
+        send({ type: 'claim', side, role });
+      };
       if (mine) seat.title = 'Click to leave this seat';
+      if (hostCanRemove) seat.title = 'Host: click to remove this player from the seat';
       col.appendChild(seat);
     }
     grid.appendChild(col);
