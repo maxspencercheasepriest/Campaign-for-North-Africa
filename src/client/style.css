@@ -104,3 +104,17 @@ button.sel { background: var(--blue); }
 
 .convoy-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; padding: 6px; background: #e4d9b8; border: 1px solid var(--khaki); }
 .convoy-row input[type=number] { width: 44px; }
+
+/* ---- Side panel fixes: the staff seats were squeezed into two columns and spilled out of the panel ---- */
+#panel { width: clamp(380px, 30vw, 560px); min-width: 0; flex-shrink: 0; }
+#tabs { flex-wrap: wrap; }
+#tabs button { min-width: 0; padding: 8px 6px; }
+.tab { min-width: 0; overflow-x: hidden; overflow-y: auto; overflow-wrap: anywhere; }
+.tab .seat-grid { grid-template-columns: 1fr; gap: 12px; margin: 0; max-width: none; }
+.tab .side-col { padding: 10px; min-width: 0; }
+.tab .seat { width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.tab .seat .who { font-size: 13px; }
+.tab table.grid { display: block; overflow-x: auto; max-width: 100%; }
+.tab select, .tab input[type=text] { max-width: 100%; }
+.unitcard, ul.orders li { overflow-wrap: anywhere; }
+ul.orders li { flex-wrap: wrap; }
