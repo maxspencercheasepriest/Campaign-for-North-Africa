@@ -222,8 +222,8 @@ export function returnPilots(air, turn) {
 }
 
 // ---------- Orders ----------
-export const MISSION_KINDS = { capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility', bRD: 'Bomb a road', bRR: 'Bomb a railway', bFC: 'Bomb a fortification', bTC: 'Bomb trucks', bPT: 'Bomb a port' };
-const BOMB_KINDS = ['bCU', 'bSD', 'bAF', 'bRD', 'bRR', 'bFC', 'bTC', 'bPT'];
+export const MISSION_KINDS = { capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility', bRD: 'Bomb a road', bRR: 'Bomb a railway', bFC: 'Bomb a fortification', bTC: 'Bomb trucks', bPT: 'Bomb a port', bCF: 'Bomb ships' };
+const BOMB_KINDS = ['bCU', 'bSD', 'bAF', 'bRD', 'bRR', 'bFC', 'bTC', 'bPT', 'bCF'];
 export const isBombMission = (k) => BOMB_KINDS.includes(k);
 
 // Planes of a squadron that can fly the mission right now.
@@ -251,6 +251,7 @@ export function validateAirOrders(g, side, o, map) {
     if (sq.kind !== 'fighter' && sq.kind !== 'bomber') return `${sq.name}: only fighter and bomber missions are in the game so far.`;
     if (m.kind === 'scramble') continue;
     const hex = typeof m.hex === 'string' ? hexFromName(m.hex) : null;
+    if (m.kind === 'bCF' && hex && map.tiles[key(...hex)]) continue; // ships can be bombed at sea [30.32]
     if (!hex || !map.tiles[key(...hex)] || map.tiles[key(...hex)].t === 'sea') return `${sq.name}: give a land hex such as C4807 for the target.`;
   }
   return null;
@@ -373,6 +374,11 @@ function bombTarget(f, tons, n, ctx, say) {
     const hit = fortReduced(col, roll);
     if (hit) { ctx.damage.fort[hk] = (ctx.damage.fort[hk] || 0) + 1; ctx.damage.fortHit[hk] = stamp; }
     say(`${tag} (d66 ${roll}): ${hit ? `fortification reduced to Level ${lv - 1}.` : 'no effect.'}`);
+  } else if (f.kind === 'bCF') {
+    if (side !== 'axis') { say(`${tag}: only the Commonwealth has a fleet to bomb.`); return; }
+    const pts = bombResult(PIN_ROWS, col, roll);
+    const r = ctx.damageShips ? ctx.damageShips(hex, pts) : { ships: 0, done: 0, sunk: [] };
+    say(r.ships ? `${tag} (d66 ${roll}): ${r.done} Damage Point${r.done === 1 ? '' : 's'} on the ships${r.sunk.length ? `; sunk: ${r.sunk.join(', ')}` : ''}.` : `${tag}: no ships there.`);
   } else if (f.kind === 'bPT') {
     const port = LOCATIONS.find((l) => l.port && l.hexes.some((h) => h[0] === hex[0] && h[1] === hex[1]));
     if (!port || ctx.portOwners?.[port.id] === side) { say(`${tag}: no enemy port there.`); return; }
@@ -489,7 +495,7 @@ export function resolveAir(g, orders, ctx) {
   const aborted = abortedSet;
   const gone = (p) => down.has(p) || aborted.has(p);
   const aaPoints = (enemy, hex, strafing) => {
-    let total = 0;
+    let total = enemy === 'cw' ? (ctx.fleetAA?.(hex) || 0) : 0; // ships always fire as anti-aircraft guns [30.38]
     for (const u of ctx.units.filter((x) => x.side === enemy && x.str > 0 && x.pos[0] === hex[0] && x.pos[1] === hex[1])) {
       const els = u.elements.filter((e) => e.toe > 0 && ctx.weapons[e.w]?.aa > 0 && (strafing || ctx.weapons[e.w].kind === 'aa')); // infantry, recce and tanks only fire at strafers [46.16, 46.22]
       if (!els.length) continue;

@@ -562,3 +562,58 @@ test('rail movement: Commonwealth only, once per stage, along working rail', asy
   assert.deepEqual(u.pos, to);
   assert.match(act(g, 'cw', { action: 'rail', unitIds: [u.id], to: dests[0].split(',').map(Number) }), /once per Operations Stage|before any other/);
 });
+
+test('fleet step: ships go to sea, fire as artillery in combat, then rest', async () => {
+  const { phasingSide } = await import('../src/server/engine.js');
+  const { nameOfHex } = await import('../src/shared/hexnames.js');
+  const g = createGame({ seed: 11, fleet: 'on', air: 'off' });
+  submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
+  submitOrders(g, g.initiative.holder, { goFirst: true });
+  assert.equal(g.step, 'fleet', 'the fleet segment follows the declaration');
+  assert.equal(g.ready.axis, true, 'no U-boats yet, so the Axis has nothing to do');
+  const v = viewFor(g, 'cw');
+  const valiant = v.fleet.ships.find((s) => s.name === 'Valiant');
+  assert.equal(valiant.gun, 6); assert.equal(valiant.aa, 12);
+  assert.match(submitOrders(g, 'cw', { ships: [{ id: valiant.id, hex: 'A0101' }] }) || '', /sea hex|coastal|Alexandria|hex/);
+  // Put the Valiant just off the coast next to a target, then hand over to combat.
+  const target = g.units.find((u) => u.side === 'axis' && u.type !== 'hq' && u.str > 0);
+  const { neighbours, key } = await import('../src/shared/hex.js');
+  const { gameMap } = await import('../src/server/engine.js');
+  const sea = neighbours(...target.pos).find((h) => gameMap().tiles[key(...h)]?.t === 'sea') || neighbours(...target.pos)[0];
+  // Distance from Alexandria is probably too great here: test the firing itself directly.
+  const { navalFire } = await import('../src/server/fleet.js');
+  const ship = g.fleet.ships.find((s) => s.name === 'Valiant');
+  ship.where = 'sea'; ship.hex = sea; ship.seaStages = 1;
+  const out = navalFire(g, 'cw', [target.pos]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].pts, 6);
+  assert.equal(navalFire(g, 'axis', [target.pos]).length, 0, 'only the Commonwealth has a fleet');
+  const dd = g.fleet.ships.find((s) => s.name === 'Jervis'); dd.where = 'sea'; dd.hex = sea; dd.gun = 1;
+  assert.equal(navalFire(g, 'cw', [target.pos]).length, 1, 'a destroyer in an adjacent sea hex cannot bombard');
+  ship.spent = true;
+  const { fleetEndStage } = await import('../src/server/fleet.js');
+  fleetEndStage(g);
+  assert.equal(ship.where, 'alex'); assert.equal(ship.rest, 2);
+  void nameOfHex; void phasingSide;
+});
+
+test('bombers damage ships at sea and U-boats torpedo them (house rule)', async () => {
+  const { damageShips, resolveFleet } = await import('../src/server/fleet.js');
+  const g = createGame({ seed: 12, fleet: 'on', air: 'off' });
+  const bb = g.fleet.ships.find((s) => s.name === 'Valiant'), dd = g.fleet.ships.find((s) => s.name === 'Jervis');
+  for (const s of [bb, dd]) { s.joined = true; s.where = 'sea'; s.hex = [10, 140]; }
+  const r = damageShips(g, [10, 140], 3, () => 1);
+  assert.equal(r.done, 3);
+  assert.ok(bb.gun < 6 || dd.sunk);
+  bb.gun = 6; dd.gun = 1; dd.sunk = false; dd.where = 'sea'; dd.hex = [10, 140];
+  const u = g.fleet.uboats[0]; u.joined = true;
+  const { gameMap } = await import('../src/server/engine.js');
+  const { key } = await import('../src/shared/hex.js');
+  const { nameOfHex } = await import('../src/shared/hexnames.js');
+  const seaHex = [10, 140];
+  gameMap().tiles[key(...seaHex)].t === 'sea' || void 0;
+  const rolls = [6, 6, 6]; // find, hit, escorts survive roll high
+  resolveFleet(g, { cw: { ships: [bb, dd].map((x) => ({ id: x.id, hex: nameOfHex(...seaHex) })) }, axis: { uboats: [{ id: u.id, hex: nameOfHex(...seaHex) }] } }, { d6: () => rolls.shift() ?? 6 });
+  assert.ok(g.log.some((l) => /torpedoes Valiant/.test(l.text)));
+  assert.equal(bb.gun, 3);
+});

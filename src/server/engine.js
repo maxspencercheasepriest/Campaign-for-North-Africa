@@ -14,6 +14,8 @@
 
 import { REINFORCEMENTS } from '../shared/reinforcements.js';
 import { nameOfHex } from '../shared/hexnames.js';
+import { createFleet } from '../shared/fleet.js';
+import { fleetArrivals, fleetEndStage, cwHasShips, axisHasBoats, validateFleetOrders, resolveFleet, navalFire, damageShips, aaAt, shipAA, available as shipAvailable } from './fleet.js';
 import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
 import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, repairPorts, portEff, portMax, newDamage, repairDamage, fortLevel, fortBase } from './air.js';
@@ -44,6 +46,7 @@ const other = (side) => (side === 'axis' ? 'cw' : 'axis');
 export const STEPS = {
   convoy: { name: 'Naval Convoy Stage', role: 'logistics', kind: 'simultaneous' },
   declare: { name: 'Initiative Declaration', role: 'cic', kind: 'holder' },
+  fleet: { name: 'Commonwealth Fleet Assignment Segment', role: 'cic', kind: 'simultaneous' },
   movecombat: { name: 'Movement & Combat Phase', role: 'front', kind: 'phasing' },
   air: { name: 'Land Support Air Phase', role: 'air', kind: 'simultaneous' },
   trucks: { name: 'Truck Convoy Movement Phase', role: 'rear', kind: 'phasing' },
@@ -85,6 +88,7 @@ export function createGame(options = {}) {
     supply: createSupply(initialSupply(options.stock === 'generous' ? 2 : 1)),
     air: createAir(),
     damage: newDamage(),
+    fleet: createFleet(),
     portOwners: initialPortOwners(),
     portPoints: { axis: 0, cw: 0 },
     portClaims: { axis: 0, cw: 0 },
@@ -193,6 +197,9 @@ function startOpStage(g, n) {
   g.opStage = n;
   for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; u.fuelPaid = false; u.reserve = 0; u.relFrom = 0; u.relCap = null; u.assaults = 0; u.resDp = false; for (const e of u.elements || []) e.airPin = 0; }
   resetMoved(g.supply);
+  g.fleet ||= createFleet();
+  fleetEndStage(g);
+  fleetArrivals(g);
   repairPorts(g);
   convoyArrivalPhase(g);
   rollWeather(g);
@@ -207,10 +214,22 @@ function beginHalf(g, half) {
   for (const u of g.units) u.contact = u.side === phasingSide(g) && inEnemyZoc(g, u, u.pos);
 }
 
+function afterDeclare(g) {
+  g.fleet ||= createFleet();
+  if (g.options.fleet === 'on' && (cwHasShips(g) || axisHasBoats(g))) {
+    setStep(g, 'fleet');
+    // A side with nothing to do here is ready at once.
+    if (!cwHasShips(g)) { g.ready.cw = true; g.pending.cw = {}; }
+    if (!axisHasBoats(g)) { g.ready.axis = true; g.pending.axis = {}; }
+  } else afterFleet(g);
+}
+function afterFleet(g) { if (g.options.air === 'on') setStep(g, 'air'); else beginHalf(g, 'A'); }
+
 function advance(g) {
   switch (g.step) {
     case 'convoy': startOpStage(g, 1); break;
-    case 'declare': if (g.options.air === 'on') setStep(g, 'air'); else beginHalf(g, 'A'); break;
+    case 'declare': afterDeclare(g); break;
+    case 'fleet': afterFleet(g); break;
     case 'air': beginHalf(g, 'A'); break;
     case 'movecombat': setStep(g, 'trucks'); repairPhase(g, phasingSide(g)); break;
     case 'trucks':
@@ -322,7 +341,8 @@ export function submitOrders(g, side, orders) {
     g.pending[side] = orders;
     g.ready[side] = true;
     if (SIDES.every((s) => g.ready[s])) {
-      if (g.step === 'air') resolveAirPhase(g, { axis: g.pending.axis, cw: g.pending.cw });
+      if (g.step === 'fleet') resolveFleet(g, { axis: g.pending.axis, cw: g.pending.cw }, { d6: () => d6(g) });
+      else if (g.step === 'air') resolveAirPhase(g, { axis: g.pending.axis, cw: g.pending.cw });
       else resolveConvoy(g, { axis: g.pending.axis, cw: g.pending.cw });
       advance(g);
     }
@@ -370,6 +390,8 @@ function validateOrders(g, side, step, o) {
       if (total > g.supply.box.axis.length) return `Only ${g.supply.box.axis.length} supply units are waiting in Tripoli.`;
       return null;
     }
+    case 'fleet':
+      return validateFleetOrders(g, side, o, gameMap());
     case 'air':
       return validateAirOrders(g, side, o, gameMap());
     case 'trucks':
@@ -399,6 +421,15 @@ function railView(g, side) {
   return { reach };
 }
 
+function fleetView(g, side, seen) {
+  const f = g.fleet; if (!f) return null;
+  if (side === 'cw') return { ships: f.ships.filter((s) => s.joined).map((s) => ({ id: s.id, name: s.name, cls: s.cls, gun: s.gun, max: s.max, aa: shipAA(s), where: s.where, hex: s.hex, seaStages: s.seaStages, rest: s.rest, sunk: s.sunk, ready: shipAvailable(s), spent: s.spent })), uboats: [] };
+  return {
+    ships: f.ships.filter((s) => s.where === 'sea' && !s.sunk && s.hex && seen(s.hex)).map((s) => ({ id: s.id, name: s.name, cls: s.cls, gun: s.gun, max: s.max, aa: shipAA(s), where: 'sea', hex: s.hex })),
+    uboats: f.uboats.filter((u) => u.joined && !u.lost).map((u) => ({ id: u.id, name: u.name, rest: u.rest, ready: u.rest === 0 })),
+  };
+}
+
 function damageView(g) {
   const d = g.damage || newDamage();
   const ports = LOCATIONS.filter((l) => l.port && portEff(g, l.id) < portMax(l.id)).map((l) => ({ id: l.id, name: l.name, hex: l.hexes[0], eff: portEff(g, l.id), max: portMax(l.id) }));
@@ -409,7 +440,7 @@ function resolveAirPhase(g, orders) {
   g.damage ||= newDamage();
   const map = mapFor(g);
   const ctx = {
-    d6: () => d6(g), log: (side, text) => log(g, side, text), map, game: g, portOwners: g.portOwners, damage: g.damage, units: g.units, weapons: WEAPONS,
+    d6: () => d6(g), log: (side, text) => log(g, side, text), map, game: g, portOwners: g.portOwners, damage: g.damage, fleetAA: (hex) => aaAt(g, hex), damageShips: (hex, pts) => damageShips(g, hex, pts, () => d6(g)), units: g.units, weapons: WEAPONS,
     turn: g.turn, opStage: g.opStage, firstTurn: scenarioOf(g).firstTurn, holder: g.initiative.holder,
     weatherAt: (hex) => weatherAt(g, hex),
     drawAmmo: (u, n) => draw(g.supply, supplyCtx(g, u.side), u, 'ammo', n),
@@ -495,6 +526,7 @@ function resolveTrucks(g, side, o) {
 
 // What an unseated side does by itself: the Axis sends a full convoy to its best port.
 export function autoOrders(g, side) {
+  if (g.step === 'fleet') return {};
   if (g.step === 'air') return autoAirOrders(g, side);
   if (g.step === 'convoy' && side === 'axis' && g.supply.box.axis.length) {
     const ports = PORTS.filter((p) => g.portOwners[p.id] === 'axis').sort((a, b) => b.capacity - a.capacity);
@@ -1024,6 +1056,8 @@ function actDefend(g, side, a = {}) {
     inEnemyZoc,
     log: (t) => log(g, 'all', t),
   };
+  ctx.navalFire = (sd, hexes) => navalFire(g, sd, hexes);
+  ctx.navalSpent = (sh) => { sh.ship.spent = true; };
   ctx.fortLevel = (h) => (map.tiles[key(...h)]?.t === 'majorcity' ? fortLevel(g.damage, h) : 0);
   ctx.retreatUnits = makeRetreat(g, { map, spendCP: (u, cp) => spendCP(g, u, cp), inEnemyZoc });
   if (!attackers.length) return null;
@@ -1157,6 +1191,7 @@ function buildView(g, side) {
     supply,
     air: airView(g, side, seen),
     damage: damageView(g),
+    fleet: fleetView(g, side, seen),
     lastAir: g.lastAir ? {
       n: g.lastAir.n, turn: g.lastAir.turn, stage: g.lastAir.stage,
       // The enemy's bases stay hidden; their flights show only where they went and what happened.

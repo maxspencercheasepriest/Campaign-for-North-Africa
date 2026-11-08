@@ -132,16 +132,21 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
       const raw = rawOf(grp, 'bar');
       const pts = actual(raw);
       if (pts <= 0) continue;
+      if (fireBarrage(grp[0].u.name, `${raw} raw → ${pts}`, pts, targets, targetTerrainShift) === 'stop') return;
+    }
+  };
+  // One barrage fire at the best target among `targets`; ships use the same resolution as guns [30.22].
+  const fireBarrage = (who, how, pts, targets, targetTerrainShift) => {
       // Target: one battalion-sized target, picked from the most numerous enemy element (the firer
       // knows only how many targets of each class are there) [12.23-12.24].
       const live = targets.filter((t) => t.e.toe - (pinned.get(t) || 0) > 0 && W(t.e).kind !== 'aa');
-      if (!live.length) return;
+      if (!live.length) return 'stop';
       live.sort((a, b) => (b.e.toe - (pinned.get(b) || 0)) - (a.e.toe - (pinned.get(a) || 0)));
       const tgt = live[0];
       const cls = W(tgt.e).class === 'armour' ? 'armour' : W(tgt.e).class === 'gun' ? 'gun' : 'infantry';
       let col = barrageColumn(pts) + targetTerrainShift;
       const roll = d66();
-      if (col < 0) { say(`Barrage (${pts} pts) on ${tgt.u.name} ${tgt.e.w}: shifted off the table by terrain, no effect.`); continue; }
+      if (col < 0) { say(`Barrage (${pts} pts) on ${tgt.u.name} ${tgt.e.w}: shifted off the table by terrain, no effect.`); return 'skip'; }
       col = Math.min(col, 8);
       const res = BARRAGE[cls][col][roll];
       if (res === 'P') pin(tgt);
@@ -150,9 +155,17 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
         if (cls !== 'gun') pin(tgt);
       }
       const bn = Math.min(W(tgt.e).bn || tgt.e.toe, tgt.e.toe);
-      say(`Barrage by ${grp[0].u.name} (${raw} raw → ${pts}) on a ${cls} target in ${tgt.u.name} (${bn} TOE of ${tgt.e.w}): roll ${roll} → ${res === 'none' ? 'no effect' : res === 'P' ? 'pinned' : `${res} TOE lost${cls !== 'gun' ? ' and pinned' : ''}`}.`);
+      say(`Barrage by ${who} (${how}) on a ${cls} target in ${tgt.u.name} (${bn} TOE of ${tgt.e.w}): roll ${roll} → ${res === 'none' ? 'no effect' : res === 'P' ? 'pinned' : `${res} TOE lost${cls !== 'gun' ? ' and pinned' : ''}`}.`);
+  };
+  // Ships of the Commonwealth Fleet fire as artillery that needs no ammunition [30.22]: first at the defenders for an attacking fleet, and at the attackers for a defending one.
+  const shipsFire = (shipSide, targets, hexes, shift) => {
+    for (const sh of ctx.navalFire?.(shipSide, hexes) || []) {
+      if (fireBarrage(sh.name, `${sh.gun} gun${sh.half ? ', halved at range' : ''} → ${sh.pts}`, sh.pts, targets.filter((t) => sh.hexes.some((h) => h[0] === t.u.pos[0] && h[1] === t.u.pos[1])), shift) === 'stop') continue;
+      ctx.navalSpent?.(sh);
     }
   };
+  shipsFire(attackers[0].side, def, [targetPos], tShiftOf('barrage'));
+  shipsFire(defenders[0].side, att, attackers.map((u) => u.pos), 0);
   barrage(attArty, def, tShiftOf('barrage'), 'att');
   // Defenders' guns fire back at the attacking hexes (no terrain benefit modelled for the attacker yet).
   barrage(defArty, att, 0, dOpt.artilleryForward ? 'defFwd' : 'def');

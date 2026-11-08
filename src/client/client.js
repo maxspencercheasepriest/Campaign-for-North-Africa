@@ -261,13 +261,13 @@ function renderOrders() {
   } else if (!S.canAct) {
     head += `<p class="note">${esc(S.actingFor || 'Nobody')} (${esc(ROLE_NAMES[st.role])} or stand-in) is acting for ${sideName(mySide())}. Advise them in staff chat.</p>`;
   }
-  const body = ({ convoy: convoyForm, declare: declareForm, air: airForm, movecombat: moveCombatPanel, trucks: trucksForm })[g.step]();
+  const body = ({ convoy: convoyForm, declare: declareForm, fleet: fleetForm, air: airForm, movecombat: moveCombatPanel, trucks: trucksForm })[g.step]();
   el.innerHTML = head + body;
   if (!S.canAct) for (const input of el.querySelectorAll('input, select, button')) input.disabled = true;
-  if (S.canAct && ['convoy', 'trucks', 'air'].includes(g.step)) {
+  if (S.canAct && ['convoy', 'trucks', 'air', 'fleet'].includes(g.step)) {
     const btn = document.createElement('button');
     btn.className = 'primary';
-    btn.textContent = g.step === 'trucks' ? 'Move supply units and finish' : g.step === 'air' ? 'Fly these missions' : 'Submit orders';
+    btn.textContent = g.step === 'trucks' ? 'Move supply units and finish' : g.step === 'air' ? 'Fly these missions' : g.step === 'fleet' ? 'Assign the fleet' : 'Submit orders';
     btn.onclick = () => send({ type: 'submit', orders: draft });
     el.appendChild(btn);
   }
@@ -454,6 +454,7 @@ function airForm() {
         <option value="bRR" ${m.kind === 'bRR' ? 'selected' : ''}>Bomb a railway in…</option>
         <option value="bFC" ${m.kind === 'bFC' ? 'selected' : ''}>Bomb a city's fortifications in…</option>
         <option value="bPT" ${m.kind === 'bPT' ? 'selected' : ''}>Bomb a port in…</option>
+        <option value="bCF" ${m.kind === 'bCF' ? 'selected' : ''}>Bomb ships in…</option>
         <option value="bTC" ${m.kind === 'bTC' ? 'selected' : ''}>Bomb trucks in…</option>` : `<option value="scramble" ${m.kind === 'scramble' ? 'selected' : ''}>Scramble against raiders</option>
         <option value="capO" ${m.kind === 'capO' ? 'selected' : ''}>Offensive patrol over…</option>
         <option value="capD" ${m.kind === 'capD' ? 'selected' : ''}>Defensive patrol over…</option>
@@ -466,6 +467,28 @@ function airForm() {
     <ul class="orders">${rows || '<li class="muted">You have no fighter or bomber squadrons.</li>'}</ul>`;
 }
 
+function fleetForm() {
+  const f = S.game.fleet;
+  if (mySide() === 'cw') {
+    draft.ships ||= [];
+    const cur = (id) => draft.ships.find((a) => a.id === id) || { hex: '' };
+    const rows = (f?.ships || []).filter((s) => !s.sunk).map((s) => {
+      const can = s.ready, a = cur(s.id);
+      const state = s.where === 'sea' ? `at sea ${s.seaStages}/3 (${esc(hexLabel(key(...s.hex)))})` : s.rest ? `resting ${s.rest}` : s.gun * 2 <= s.max ? 'too damaged' : 'in port';
+      return `<li><b>${esc(s.name)}</b> <span class="muted">${esc(s.cls)} · Gun ${s.gun}/${s.max} · AA ${s.aa} · ${state}</span>${can ? `<br>
+        <label>Send to hex <input data-fl="${s.id}" size="6" placeholder="D4500" value="${esc(a.hex || '')}"></label>` : ''}</li>`;
+    }).join('');
+    return `<p class="help">Place ships in a sea or coastal hex within 100 hexes of Alexandria. Each ship fires once as ammunition-free artillery in any combat that stage: at the coastal hex it is in, and a battleship or heavy cruiser also at adjacent hexes (full strength) and two hexes away (half) [30.2]. A ship that fires rests two stages; no ship stays more than three stages at sea, and each stage at sea needs two in port [30.16, 30.25]. Ships at sea can be bombed and hunted by U-boats.</p>
+      <ul class="orders">${rows || '<li class="muted">No ships have joined yet.</li>'}</ul>`;
+  }
+  draft.uboats ||= [];
+  const cur = (id) => draft.uboats.find((a) => a.id === id) || { hex: '' };
+  const rows = (f?.uboats || []).map((u) => `<li><b>${esc(u.name)}</b> <span class="muted">${u.ready ? 'ready' : `resting ${u.rest}`}</span>${u.ready ? `<br>
+    <label>Patrol sea hex <input data-ub="${u.id}" size="6" placeholder="D4500" value="${esc(cur(u.id).hex || '')}"></label>` : ''}</li>`).join('');
+  return `<p class="help">House rule: a U-boat on patrol may find Commonwealth ships within one hex of its patrol hex (5-6 on a die), torpedo the biggest one (4-6 on a die: 3 Gun points off a battleship or heavy cruiser, 2 off others), and then risks being sunk by the escorts. It rests two stages afterwards. You see ships only when your troops can.</p>
+    <ul class="orders">${rows || '<li class="muted">No U-boats are in the Mediterranean.</li>'}</ul>`;
+}
+
 function trucksForm() {
   draft.moves ||= [];
   const mine = (S.game.supply || []).filter((x) => x.own);
@@ -476,6 +499,14 @@ function trucksForm() {
 }
 
 function wireOrders(el) {
+  el.querySelectorAll('[data-fl]').forEach((i) => (i.onchange = () => {
+    draft.ships = (draft.ships || []).filter((a) => a.id !== i.dataset.fl);
+    if (i.value.trim()) draft.ships.push({ id: i.dataset.fl, hex: i.value.trim() });
+  }));
+  el.querySelectorAll('[data-ub]').forEach((i) => (i.onchange = () => {
+    draft.uboats = (draft.uboats || []).filter((a) => a.id !== i.dataset.ub);
+    if (i.value.trim()) draft.uboats.push({ id: i.dataset.ub, hex: i.value.trim() });
+  }));
   el.querySelectorAll('[data-am]').forEach((i) => (i.onchange = () => {
     draft.missions ||= [];
     let m = draft.missions.find((x) => x.sq === i.dataset.sq);
@@ -566,7 +597,7 @@ function renderSupply() {
 // ---------- Air tab (Air Game, stage 1: forces and bases) ----------
 let airSeen = null; // number of the last air phase the map has shown
 let airAnim = null;
-const AIR_VERB = { capO: 'offensive patrol', capD: 'defensive patrol', strafe: 'strafing', bCU: 'bombing troops', bSD: 'bombing a supply dump', bAF: 'bombing an air facility', bRD: 'bombing a road', bRR: 'bombing a railway', bFC: 'bombing fortifications', bTC: 'bombing trucks', bPT: 'bombing a port' };
+const AIR_VERB = { capO: 'offensive patrol', capD: 'defensive patrol', strafe: 'strafing', bCU: 'bombing troops', bSD: 'bombing a supply dump', bAF: 'bombing an air facility', bRD: 'bombing a road', bRR: 'bombing a railway', bFC: 'bombing fortifications', bTC: 'bombing trucks', bPT: 'bombing a port', bCF: 'bombing ships' };
 function startAirAnim() {
   airAnim = { start: performance.now(), dur: 3600 };
   const tick = () => {
@@ -655,7 +686,7 @@ const scenSel = $('optScenario');
 scenSel.innerHTML = Object.values(SCENARIOS).map((sc) => `<option value="${sc.id}">${esc(sc.name)} (GT 1-${sc.lastTurn})</option>`).join('');
 const showBlurb = () => { const sc = SCENARIOS[scenSel.value]; $('scenarioBlurb').textContent = `${sc.blurb} Estimated play: ${sc.hours}.`; };
 scenSel.onchange = showBlurb; showBlurb();
-$('startBtn').onclick = () => send({ type: 'start', options: { scenario: scenSel.value, reinforce: $('optReinforce').value, troops: $('optTroops').value, stock: $('optStock').value, air: $('optAir').value, portRewards: $('optPorts').value } });
+$('startBtn').onclick = () => send({ type: 'start', options: { scenario: scenSel.value, reinforce: $('optReinforce').value, troops: $('optTroops').value, stock: $('optStock').value, air: $('optAir').value, portRewards: $('optPorts').value, fleet: $('optFleet').value } });
 
 // ---------- Tabs ----------
 
@@ -911,6 +942,19 @@ function drawMap() {
 }
 
 // Flight paths from the last Land Support Air Phase, plus the missions being planned now.
+function drawFleet() {
+  const f = S.game.fleet; if (!f?.ships) return;
+  const s = view.size;
+  for (const sh of f.ships) {
+    if (sh.where !== 'sea' || !sh.hex) continue;
+    const p = centre(...sh.hex), x = p.x + s * 0.1, y = p.y + s * 0.15;
+    ctx.fillStyle = '#7a5a2e'; ctx.strokeStyle = '#2b1d08'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(x - s * 0.5, y - s * 0.15); ctx.lineTo(x + s * 0.5, y - s * 0.15); ctx.lineTo(x + s * 0.32, y + s * 0.2); ctx.lineTo(x - s * 0.4, y + s * 0.2); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.max(7, s * 0.26)}px sans-serif`; ctx.textAlign = 'center';
+    ctx.fillText(`${sh.cls} ${sh.gun}`, x, y + s * 0.07);
+  }
+}
+
 function drawRailReach() {
   if (!railMode || !selected) return;
   const su = myUnits().find((u) => u.id === selected); if (!su) return;
@@ -922,6 +966,7 @@ function drawRailReach() {
 
 function drawDamage() {
   drawRailReach();
+  drawFleet();
   const dm = S.game.damage; if (!dm) return;
   const s = view.size;
   const cross = (k, col) => {

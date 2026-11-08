@@ -66,6 +66,8 @@ export function stepHelp(game, { side, canAct }) {
         'A convoy is bombed when it reaches port, using where the Commonwealth divisions are at that moment, so a later stage lets you see before you commit. Units that land appear at the port and must then be trucked forward.',
         ...watch,
       ]);
+    case 'fleet':
+      return out('Fleet Assignment Segment', side === 'cw' ? ['Send ships to sea hexes to bombard the coast in this stage\'s combats. Ships that fire rest for two stages, and none stays out more than three.', ...watch] : ['U-boats (house rule) can patrol a sea hex to torpedo Commonwealth ships nearby.', ...watch]);
     case 'air':
       return out('Land Support Air Phase', ['Give each fighter squadron a job (bomber squadrons bomb troops, supply dumps or air facilities): offensive patrol over a target hex, defensive patrol over your own, strafing of enemy infantry, or stand by to scramble when raiders come near its base. Type the target hex as a name like C4807.', 'Fighters meet in the air before they strafe. Planes that fly need refitting, fuelling and arming again afterwards, which uses your air Stores, Fuel and Ammo.', ...watch]);
     case 'declare':
