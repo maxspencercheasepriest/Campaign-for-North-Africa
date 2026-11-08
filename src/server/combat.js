@@ -74,6 +74,9 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
   const tankRole = opts.tankRole || 'assault';
   const dOpt = opts.defence || { artilleryForward: false, tankRole: 'antiArmour', retreat: new Set() };
   const terr = TERRAIN[map.tiles[key(...targetPos)].t];
+  // A fortified hex gives one column shift per Level, and the defender takes only the better of fortification and terrain [14.33, 25.2].
+  const fort = ctx.fortLevel ? ctx.fortLevel(targetPos) : terr.fortified ? 2 : 0;
+  const tShiftOf = (kind) => Math.min(shift(terr.combat?.[kind]), fort ? -fort : 0);
   const crossings = attackers.map((u) => crossing(map, u.pos, targetPos)).filter(Boolean);
 
   // ---- Capability points [11.2] (defender cost may be reduced after the result, 11.27) ----
@@ -150,7 +153,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
       say(`Barrage by ${grp[0].u.name} (${raw} raw → ${pts}) on a ${cls} target in ${tgt.u.name} (${bn} TOE of ${tgt.e.w}): roll ${roll} → ${res === 'none' ? 'no effect' : res === 'P' ? 'pinned' : `${res} TOE lost${cls !== 'gun' ? ' and pinned' : ''}`}.`);
     }
   };
-  barrage(attArty, def, shift(terr.combat?.barrage), 'att');
+  barrage(attArty, def, tShiftOf('barrage'), 'att');
   // Defenders' guns fire back at the attacking hexes (no terrain benefit modelled for the attacker yet).
   barrage(defArty, att, 0, dOpt.artilleryForward ? 'defFwd' : 'def');
 
@@ -199,7 +202,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
   };
   let reassignedToCA = 0;
   if (defArmour.length) {
-    const r = aaFire(attAT, true, shift(terr.combat?.antiArmour) + hexsideAA);
+    const r = aaFire(attAT, true, tShiftOf('antiArmour') + hexsideAA);
     if (r.raw) {
       const removed = {};
       absorb(defArmour.map((x) => x), 'ap', r.dmg, removed);
@@ -251,7 +254,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
   // Column shifts.
   let shifts = 0;
   const notes = [];
-  const tShift = shift(terr.combat?.closeAssault);
+  const tShift = tShiftOf('closeAssault');
   if (tShift) { shifts += tShift; notes.push(`terrain ${tShift > 0 ? '+' : ''}${tShift}`); }
   // Hexsides: the defender benefits from one type only; down-slope bonuses offset [15.33-15.36].
   if (crossings.length) {
@@ -318,7 +321,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
   const dCapt = CA_DEFENDER_CAPTURED[col].includes(dSum);
 
   // Retreats the defender can't make cost 10% per hex; major cities may ignore retreats [15.82].
-  if (retreatHexes && terr.fortified) { say('Defenders in a major city ignore the retreat result.'); retreatHexes = 0; }
+  if (retreatHexes && fort >= 1) { say('Defenders in a major city ignore the retreat result.'); retreatHexes = 0; }
   let shortfall = 0;
   if (retreatHexes) {
     shortfall = retreatUnits(defenders.filter((d) => d.str > 0), attackers, retreatHexes, { dryRun: true });

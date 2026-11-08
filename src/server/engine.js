@@ -939,6 +939,7 @@ function actDefend(g, side, a = {}) {
     inEnemyZoc,
     log: (t) => log(g, 'all', t),
   };
+  ctx.fortLevel = (h) => (map.tiles[key(...h)]?.t === 'majorcity' ? fortLevel(g.damage, h) : 0);
   ctx.retreatUnits = makeRetreat(g, { map, spendCP: (u, cp) => spendCP(g, u, cp), inEnemyZoc });
   if (!attackers.length) return null;
   const defOpts = {
