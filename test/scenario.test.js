@@ -316,3 +316,33 @@ test('air phase leaves a record for the map: own flights with bases, enemy fligh
   assert.equal(mine.n, 1);
   JSON.stringify(mine);
 });
+
+test('role-limited views: each seat gets only its own area', () => {
+  const g = createGame({ seed: 1, air: 'on' });
+  const full = viewFor(g, 'axis');
+  assert.ok(full.air.squadrons.length > 0 && full.supply.some((x) => x.own && x.ammo != null), 'no roles given = everything');
+  const front = viewFor(g, 'axis', ['front']);
+  assert.equal(front.air, null);
+  assert.equal(front.supply.filter((x) => x.own).length, 0);
+  assert.equal(front.box, null);
+  assert.ok(front.units.filter((u) => u.side === 'axis').every((u) => u.cohesion !== undefined), 'the front sees unit detail');
+  const air = viewFor(g, 'axis', ['air']);
+  assert.ok(air.air.squadrons.length > 0);
+  assert.equal(air.supply.filter((x) => x.own).length, 0);
+  assert.ok(air.units.filter((u) => u.side === 'axis').every((u) => u.cohesion === undefined && u.elements === undefined && u.str > 0));
+  const log = viewFor(g, 'axis', ['logistics']);
+  assert.equal(log.air, null);
+  assert.ok(log.supply.some((x) => x.own && x.ammo != null));
+  assert.equal(typeof log.box, 'number');
+  assert.ok(log.units.filter((u) => u.side === 'axis').every((u) => u.cohesion === undefined && u.ammoAvail !== undefined));
+  const rear = viewFor(g, 'axis', ['rear']);
+  assert.equal(rear.box, null);
+  assert.ok(rear.supply.some((x) => x.own && x.ammo != null));
+  const cic = viewFor(g, 'axis', ['cic']);
+  assert.equal(cic.air.summary, true);
+  assert.ok(cic.supplyTotals.ammo > 0);
+  assert.ok(cic.supply.filter((x) => x.own).every((x) => x.ammo === undefined));
+  const two = viewFor(g, 'axis', ['cic', 'air']);
+  assert.ok(two.air.squadrons.length > 0, 'a player standing in for a vacant seat gets its view too');
+  JSON.stringify([front, air, log, rear, cic]);
+});

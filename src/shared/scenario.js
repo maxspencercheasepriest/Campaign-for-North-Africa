@@ -27,6 +27,25 @@ export const ROLE_NAMES = {
   front: 'Front-line Commander',
 };
 
+// What each staff seat can see (2 = everything, 1 = a summary, 0 = nothing). Everybody sees the map, the weather, the units' places and
+// strengths, the log and the chat; the rest is split by job so teammates have to talk to each other.
+// unitDetail: 2 = cohesion, CP and weapons of your units, 1 = just their fuel and ammunition position, 0 = place and strength only.
+export const ROLE_ACCESS = {
+  cic: { supply: 1, convoys: 1, air: 1, unitDetail: 2 },
+  logistics: { supply: 2, convoys: 2, air: 0, unitDetail: 1 },
+  rear: { supply: 2, convoys: 0, air: 0, unitDetail: 1 },
+  air: { supply: 0, convoys: 0, air: 2, unitDetail: 0 },
+  front: { supply: 0, convoys: 0, air: 0, unitDetail: 2 },
+};
+// A player sees the union of the seats they cover (their own, plus any vacant seat they stand in for). null = all seats.
+export function accessFor(roles) {
+  const keys = ['supply', 'convoys', 'air', 'unitDetail'];
+  if (!roles) return Object.fromEntries(keys.map((k) => [k, 2]));
+  const out = Object.fromEntries(keys.map((k) => [k, 0]));
+  for (const r of roles) for (const k of keys) out[k] = Math.max(out[k], ROLE_ACCESS[r]?.[k] ?? 0);
+  return out;
+}
+
 // Scenarios that share the Italian-front deployment of section 60.3-60.4 [60.0, 64.0].
 // victory: 'tiers' = the strategic/decisive/tactical test of 60.81; 'points' = occupation points (60.82, 64.73).
 // Point tables map location id -> [Axis points, Commonwealth points] for the side that holds it.

@@ -17,7 +17,7 @@ import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
 import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities } from './air.js';
 import {
-  SIDES, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
+  SIDES, accessFor, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
   buildMap, initialUnits, initialSupply, initialPortOwners, VISION_RANGE,
 } from '../shared/scenario.js';
 import {
@@ -980,7 +980,11 @@ function airView(g, side, seen) {
   };
 }
 
-export function viewFor(g, side) {
+export function viewFor(g, side, roles = null) {
+  return applyAccess(buildView(g, side), accessFor(roles), side);
+}
+
+function buildView(g, side) {
   const own = g.units.filter((u) => u.side === side);
   const seen = (pos) => own.some((u) => distance(u.pos, pos) <= VISION_RANGE);
   const enemy = g.units
@@ -1048,6 +1052,32 @@ export function viewFor(g, side) {
     over: g.over,
     log: g.log.filter((l) => l.side === 'all' || l.side === side).slice(-100),
   };
+}
+
+// Role-limited views: each staff seat sees mostly its own area, so teammates have to share what they know.
+const BASIC_UNIT = ['id', 'side', 'nation', 'name', 'type', 'size', 'str', 'maxStr', 'pos'];
+const SUPPLY_UNIT = ['fuelNeed', 'fuelAvail', 'ammoAvail', 'ammoNeed', 'supplyNote'];
+function applyAccess(v, acc, side) {
+  v.access = acc;
+  if (acc.unitDetail < 2) {
+    const keep = acc.unitDetail === 1 ? [...BASIC_UNIT, ...SUPPLY_UNIT] : BASIC_UNIT;
+    v.units = v.units.map((u) => (u.side !== side ? u : Object.fromEntries(keep.filter((k) => k in u).map((k) => [k, u[k]]))));
+  }
+  const mine = v.supply.filter((x) => x.own);
+  if (acc.supply < 2) {
+    v.supplyTotals = acc.supply === 1 ? { units: mine.length, ammo: mine.reduce((n, x) => n + x.ammo, 0), fuel: mine.reduce((n, x) => n + x.fuel, 0) } : null;
+    v.supply = v.supply.filter((x) => !x.own).concat(acc.supply === 1 ? mine.map(({ id, side: sd, pos, own }) => ({ id, side: sd, pos, own })) : []);
+  }
+  if (acc.convoys < 2) {
+    v.plan = []; v.convoyLevel = null; v.supplyPeriod = null;
+    if (acc.convoys === 0) { v.box = null; v.atSea = []; }
+  }
+  if (acc.air < 2 && v.air) {
+    v.air = acc.air === 1
+      ? { summary: true, totals: { squadrons: v.air.squadrons.length, planes: v.air.squadrons.reduce((n, q) => n + q.total, 0), ready: v.air.squadrons.reduce((n, q) => n + q.ready, 0) }, squadrons: [], facilities: [], pilots: v.air.pilots, sgsu: v.air.sgsu, stock: null }
+      : null;
+  }
+  return v;
 }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));

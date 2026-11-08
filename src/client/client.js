@@ -102,6 +102,7 @@ function render() {
   if (sk !== draftStageKey) { draftStageKey = sk; draft = g.myOrders ? structuredClone(g.myOrders) : {}; }
   if (selected && !myUnits().some((u) => u.id === selected)) selected = null;
   if (g.lastAir && g.lastAir.n !== airSeen) { const first = airSeen === null; airSeen = g.lastAir.n; if (!first) startAirAnim(); }
+  applyTabAccess();
   renderOrders();
   renderSupply();
   renderAir();
@@ -250,7 +251,9 @@ function renderOrders() {
     wireDecision(el, g.decision);
     return;
   }
-  let head = `<h3>${esc(st.name)}</h3>${st.placeholder ? '<p class="note">Placeholder rules: this step will be replaced by the full rules.</p>' : ''}`;
+  const SEES = { cic: 'the whole map, every formation, and summaries of supply, convoys and air', logistics: 'supply units, convoys and reinforcements, and each formation\'s fuel and ammunition position', rear: 'supply units and truck movement, and each formation\'s fuel and ammunition position', air: 'squadrons, bases, air stocks and air missions', front: 'full detail on your formations: cohesion, movement and weapons' };
+  const seat = S.you?.role ? `<p class="muted">${esc(ROLE_NAMES[S.you.role])}: you see ${SEES[S.you.role]}, plus the map, weather and log. Ask your teammates in staff chat for the rest.</p>` : '';
+  let head = `${seat}<h3>${esc(st.name)}</h3>${st.placeholder ? '<p class="note">Placeholder rules: this step will be replaced by the full rules.</p>' : ''}`;
   if (!acting) {
     const who = (g.acting || []).map(sideName).join(' and ');
     head += `<p class="note">${g.ready?.[mySide()] ? 'Your orders are in. ' : ''}Waiting on ${who || 'the host'}.</p>`;
@@ -354,6 +357,7 @@ function declareForm() {
 
 function moveCombatPanel() {
   const g = S.game;
+  if ((g.access?.unitDetail ?? 2) < 2) return `<p>${sideName(g.phasing)} is Player ${g.half}, moving and fighting. Your seat doesn't see unit orders: the Front-line Commander runs this. Pass them what you know in staff chat.</p>` + lastCombatReport();
   if (!myPhase()) return `<p>${sideName(g.phasing)} is Player ${g.half} and is moving and fighting. Your units may only react once Reaction is implemented.</p>` + lastCombatReport();
   const seg = g.seg;
   const sel = myUnits().find((u) => u.id === selected);
@@ -382,6 +386,10 @@ function moveCombatPanel() {
 function unitCard(u) {
   const frozen = S.game.seg?.frozen?.includes(u.id);
   const moved = S.game.seg?.moved?.includes(u.id);
+  const acc = S.game.access || { unitDetail: 2 };
+  if (acc.unitDetail < 2) {
+    return `<div class="unitcard"><b>${esc(u.name)}</b><br>TOE ${u.str}/${u.maxStr}${u.fuelNeed ? ` · fuel ${Math.floor(u.fuelAvail)}/${u.fuelNeed}` : ''}${acc.unitDetail === 1 && u.ammoAvail != null ? ` · ammo in reach ${Math.floor(u.ammoAvail)}` : ''}<br><span class="muted">Movement, cohesion and weapons are the Front-line Commander's business: ask in staff chat.</span></div>`;
+  }
   return `<div class="unitcard"><b>${esc(u.name)}</b><br>
     CPA ${u.cpa} · used ${fmtCP(u.cpUsed)}${u.cpa <= 10 ? ` (foot: max ${u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT})` : ''} · cohesion <b class="${u.cohesion < 0 ? 'bad' : ''}">${u.cohesion}</b><br>
     Morale ${u.morale > 0 ? '+' : ''}${u.morale} · TOE ${u.str}/${u.maxStr}${u.fuelNeed ? ` · fuel ${Math.floor(u.fuelAvail)}/${u.fuelNeed}` : ''} · ammo in reach ${Math.floor(u.ammoAvail)}${u.ammoNeed ? `/${u.ammoNeed} to attack` : ""}${u.motorised ? ` · breakdown pts ${fmtCP(u.bp)}` : ''}
@@ -519,15 +527,21 @@ function renderSupply() {
   const el = $('tab-supply');
   if (!mySide()) { el.innerHTML = ''; return; }
   const g = S.game;
+  const acc = g.access || { supply: 2, convoys: 2, air: 2, unitDetail: 2 };
   const n = (v) => Math.floor(v);
   const sup = (g.supply || []).filter((x) => x.own);
   const v = g.victory;
-  el.innerHTML = `<h3>Formations</h3><table class="grid"><tr><th>Unit</th><th>CP</th><th>Coh</th><th>Str</th><th>Fuel need</th><th>Fuel</th><th>Ammo</th></tr>
-    ${myUnits().map((u) => `<tr class="${u.cohesion <= -10 || (u.fuelNeed > u.fuelAvail) ? 'warn' : ''}"><td>${esc(u.name)}</td><td>${fmtCP(u.cpUsed)}/${u.cpa}</td><td>${u.cohesion}</td><td>${u.str}/${u.maxStr}</td><td>${u.fuelNeed || '–'}</td><td>${n(u.fuelAvail)}</td><td>${n(u.ammoAvail)}${u.ammoNeed ? `/${u.ammoNeed}` : ""}</td></tr>`).join('')}</table>
-    ${myUnits().filter((u) => u.supplyNote).map((u) => `<p class="bad"><b>${esc(u.name)}:</b> ${esc(u.supplyNote)}</p>`).join('')}
-    <h3>Supply units</h3><table class="grid"><tr><th>Where</th><th>Ammo</th><th>Fuel</th></tr>
-    ${sup.map((x) => `<tr><td>${esc(hexLabel(key(...x.pos)))}</td><td>${n(x.ammo)}</td><td>${n(x.fuel)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None in the field.</td></tr>'}</table>
-    ${mySide() === 'axis' ? `<p>Waiting in Tripoli: <b>${g.box}</b> supply unit${g.box === 1 ? '' : 's'}.</p>` : ''}
+  const cols = acc.unitDetail === 2 ? '<th>CP</th><th>Coh</th>' : '';
+  const row = (u) => `<tr class="${(acc.unitDetail === 2 && u.cohesion <= -10) || (u.fuelNeed > u.fuelAvail) ? 'warn' : ''}"><td>${esc(u.name)}</td>${acc.unitDetail === 2 ? `<td>${fmtCP(u.cpUsed)}/${u.cpa}</td><td>${u.cohesion}</td>` : ''}<td>${u.str}/${u.maxStr}</td><td>${u.fuelNeed || '–'}</td><td>${n(u.fuelAvail)}</td><td>${n(u.ammoAvail)}${u.ammoNeed ? `/${u.ammoNeed}` : ''}</td></tr>`;
+  const formations = acc.unitDetail >= 1
+    ? `<h3>Formations</h3><table class="grid"><tr><th>Unit</th>${cols}<th>Str</th><th>Fuel need</th><th>Fuel</th><th>Ammo</th></tr>${myUnits().map(row).join('')}</table>
+      ${myUnits().filter((u) => u.supplyNote).map((u) => `<p class="bad"><b>${esc(u.name)}:</b> ${esc(u.supplyNote)}</p>`).join('')}` : '';
+  const dumps = acc.supply === 2
+    ? `<h3>Supply units</h3><table class="grid"><tr><th>Where</th><th>Ammo</th><th>Fuel</th></tr>
+      ${sup.map((x) => `<tr><td>${esc(hexLabel(key(...x.pos)))}</td><td>${n(x.ammo)}</td><td>${n(x.fuel)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None in the field.</td></tr>'}</table>`
+    : g.supplyTotals ? `<h3>Supplies</h3><p>${g.supplyTotals.units} supply units in the field, holding <b>${n(g.supplyTotals.ammo)}</b> Ammo and <b>${n(g.supplyTotals.fuel)}</b> Fuel in all. The Logistics and Rear Area Commanders have the detail.</p>` : '';
+  const box = acc.convoys >= 1 && g.box != null && mySide() === 'axis' ? `<p>Waiting in Tripoli: <b>${g.box}</b> supply unit${g.box === 1 ? '' : 's'}.</p>` : '';
+  el.innerHTML = `${formations}${dumps}${box}
     <p>Prisoners held: <b>${g.prisoners?.[mySide()] ?? 0}</b> TOE points.</p>
     ${victoryHtml(v)}
     <p class="help">Units draw Fuel (once per Operations Stage) and Ammunition (at combat) from supply units within half their CPA [32.2]. Spending past the allowance costs cohesion. A stage spent resting restores up to 5 cohesion (never above 0). At −26 a unit can't move or fight.</p>`;
@@ -565,6 +579,10 @@ function renderAir() {
   const el = $('tab-air');
   if (!mySide() || !S.game?.air) { el.innerHTML = ''; return; }
   const a = S.game.air;
+  if (a.summary) {
+    el.innerHTML = `<h3>Air forces</h3><p><b>${a.totals.planes}</b> aircraft in <b>${a.totals.squadrons}</b> squadrons, <b>${a.totals.ready}</b> ready to fly. The Air Commander runs them: ask in staff chat for detail, or to arrange cover.</p>${lastAirReport()}`;
+    return;
+  }
   const fname = (id) => a.facilities.find((f) => f.id === id)?.name || id;
   const planes = a.squadrons.reduce((n, s) => n + s.total, 0), ready = a.squadrons.reduce((n, s) => n + s.ready, 0);
   const pilots = Object.entries(a.pilots).filter(([, n]) => n).sort((x, y) => y[0] - x[0]).map(([r, n]) => `${n}×${r}`).join(', ');
@@ -624,6 +642,17 @@ scenSel.onchange = showBlurb; showBlurb();
 $('startBtn').onclick = () => send({ type: 'start', options: { scenario: scenSel.value, reinforce: $('optReinforce').value, troops: $('optTroops').value, stock: $('optStock').value, air: $('optAir').value } });
 
 // ---------- Tabs ----------
+
+// Hide the tabs a seat has nothing in [role-limited views].
+function applyTabAccess() {
+  const acc = S.game?.access || { supply: 2, air: 2, unitDetail: 2 };
+  const show = { supply: acc.supply > 0 || acc.unitDetail > 0, air: acc.air > 0 };
+  for (const [tab, ok] of Object.entries(show)) {
+    document.querySelector(`#tabs button[data-tab="${tab}"]`)?.classList.toggle('hidden', !ok);
+    if (!ok && !$(`tab-${tab}`).classList.contains('hidden')) document.querySelector('#tabs button[data-tab="orders"]').click();
+  }
+}
+
 
 for (const b of document.querySelectorAll('#tabs button')) {
   b.onclick = () => {
@@ -975,8 +1004,8 @@ function showHexInfo([c, r]) {
   $('hexInfo').innerHTML = [
     `<b>${nameOfHex(c, r)}</b> ${esc(terr.label)} <span class="muted">(CP ${terr.np === Infinity ? 'P' : terr.np}/${terr.mp === Infinity ? 'P' : terr.mp}, stack ${terr.stack})</span>`,
     port ? `${esc(port.name)} (${sideName(S.game.portOwners[port.id])}${port.port ? ', port' : ''}${port.city ? ', major city' : ''}${port.victory ? ', victory location' : ''})` : '',
-    ...us.map((u) => `${esc(u.name)} · ${u.str}/${u.maxStr} TOE points${u.side === mySide() ? ` · CP ${fmtCP(u.cpUsed)}/${u.cpa} · coh ${u.cohesion}` : ''}`),
-    ...sup.map((x) => x.own ? `Supply unit: ammo ${Math.floor(x.ammo)}, fuel ${Math.floor(x.fuel)}` : 'Enemy supply unit'),
+    ...us.map((u) => `${esc(u.name)} · ${u.str}/${u.maxStr} TOE points${u.side === mySide() && u.cohesion != null ? ` · CP ${fmtCP(u.cpUsed)}/${u.cpa} · coh ${u.cohesion}` : ''}`),
+    ...sup.map((x) => x.own ? (x.ammo != null ? `Supply unit: ammo ${Math.floor(x.ammo)}, fuel ${Math.floor(x.fuel)}` : 'Your supply unit') : 'Enemy supply unit'),
     reach ? `Move here: ${fmtCP(reach.cost)} CP${reach.stop ? ' · enters enemy ZOC (must stop)' : ''}` : '',
   ].filter(Boolean).join('<br>');
 }

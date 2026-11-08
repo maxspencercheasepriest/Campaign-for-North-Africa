@@ -99,7 +99,9 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
         steps: STEPS,
       };
       if (room.game && me.side) {
-        msg.game = viewFor(room.game, me.side);
+        // A player sees their own seat, plus any vacant seat they stand in for.
+        const covered = me.role ? ROLES.filter((r) => r === me.role || authority(me.side, r)?.id === me.id) : null;
+        msg.game = viewFor(room.game, me.side, covered);
         const auth = authority(me.side, actingRole(room.game));
         msg.canAct = !room.game.over && actingSides(room.game).includes(me.side) && auth?.id === me.id;
         msg.actingFor = auth ? auth.name : null;
