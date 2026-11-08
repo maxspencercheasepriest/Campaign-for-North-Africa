@@ -346,3 +346,64 @@ test('role-limited views: each seat gets only its own area', () => {
   assert.ok(two.air.squadrons.length > 0, 'a player standing in for a vacant seat gets its view too');
   JSON.stringify([front, air, log, rear, cic]);
 });
+
+test('air game stage 4: anti-aircraft tables [46.3, 46.4]', async () => {
+  const a = await import('../src/server/air.js');
+  const T = a.AA_TABLES;
+  assert.equal(a.flakColumn(0), -1);
+  assert.equal(a.flakColumn(4), 0);
+  assert.equal(a.flakColumn(5), 1);
+  assert.equal(a.flakColumn(100), 9);
+  assert.equal(a.flakShift(23), 0);
+  assert.equal(a.flakShift(24), 1);
+  assert.equal(a.flakShift(72), 3);
+  assert.equal(a.aaResult(T.destroyed, 0, 55), 0);
+  assert.equal(a.aaResult(T.destroyed, 0, 56), 1);
+  assert.equal(a.aaResult(T.destroyed, 9, 66), 5);
+  assert.equal(a.aaResult(T.aborted, 9, 66), 7);
+  assert.equal(a.aaResult(T.aborted, 4, 14), 1);
+  assert.equal(a.aaResult(T.fighter, 5, 63), 2);
+  assert.equal(a.aaResult(T.fighter, 9, 61), 3);
+  assert.equal(a.aaResult(T.fighter, 0, 64), 0);
+});
+
+test('air game stage 4: flak shoots at bombers over a target and uses ammunition', async () => {
+  const a = await import('../src/server/air.js');
+  const { hexFromName } = await import('../src/shared/hexnames.js');
+  const { WEAPONS } = await import('../src/shared/weapons.js');
+  const g = createGame({ seed: 3, air: 'on' });
+  const sq = g.air.squadrons.find((s) => s.side === 'cw' && s.kind === 'bomber' && s.planes.length >= 8);
+  sq.facility = 'matruh';
+  for (const s of g.air.squadrons) for (const p of s.planes) { p.ready = p.fueled = p.armed = false; }
+  for (const p of sq.planes.slice(0, 8)) { p.ready = p.fueled = p.armed = true; }
+  const target = hexFromName('C4218');
+  const aa = { id: 'test-aa', side: 'axis', name: 'Test AA', type: 'inf', str: 12, pos: target, elements: [{ w: '90/53 AA', toe: 12, max: 12 }] };
+  assert.ok(WEAPONS['90/53 AA'].aa > 0);
+  let ammoDrawn = 0;
+  const ctx = {
+    map: { tiles: {} }, units: [aa], weapons: WEAPONS, d6: () => 6, log: () => {}, drawAmmo: () => { ammoDrawn++; return true; },
+    supplyUnitsAt: () => [], supplyAt: () => false, weatherAt: () => 'normal', turn: 1, opStage: 1, firstTurn: 1, holder: 'cw',
+  };
+  a.resolveAir(g, { cw: { missions: [{ sq: sq.id, kind: 'bCU', hex: 'C4218' }] }, axis: {} }, ctx);
+  assert.equal(ammoDrawn, 1, 'the AA gun used 1 Ammo for its target group');
+  const f = g.lastAir.flights[0];
+  assert.equal(f.sent, 8);
+  assert.ok(f.lost > 0, 'flak shot planes down');
+  // Without ammunition the gun cannot fire.
+  const g2 = createGame({ seed: 3, air: 'on' });
+  const sq2 = g2.air.squadrons.find((s) => s.side === 'cw' && s.kind === 'bomber' && s.planes.length >= 8);
+  sq2.facility = 'matruh';
+  for (const s of g2.air.squadrons) for (const p of s.planes) { p.ready = p.fueled = p.armed = false; }
+  for (const p of sq2.planes.slice(0, 8)) { p.ready = p.fueled = p.armed = true; }
+  a.resolveAir(g2, { cw: { missions: [{ sq: sq2.id, kind: 'bCU', hex: 'C4218' }] }, axis: {} }, { ...ctx, units: [{ ...aa, elements: [{ w: '90/53 AA', toe: 12, max: 12 }] }], drawAmmo: () => false });
+  assert.equal(g2.lastAir.flights[0].lost, 0, 'no ammunition, no flak');
+});
+
+test('air supply costs follow the abstract rules [47.22, 47.23]', () => {
+  const g = createGame({ seed: 1, air: 'on' });
+  const sqs = g.air.squadrons.filter((q) => q.side === 'cw' && q.planes.some((p) => p.ready));
+  const fuel = sqs.reduce((n, q) => n + (q.kind === 'fighter' ? 1 : 3), 0); // 1 per fighter squadron, 3 per other Commonwealth squadron
+  const ammo = sqs.filter((q) => q.kind !== 'fighter').length; // fighters need no Ammo to arm
+  assert.equal(g.air.stock.cw.fuel, 250 - fuel);
+  assert.equal(g.air.stock.cw.ammo, 200 - ammo);
+});

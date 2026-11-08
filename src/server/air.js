@@ -2,7 +2,7 @@
 // Rules used: air supply and Tactical Maintenance [38], flight limits [37.22, 39.11], scramble [40.3], CAP and
 // strafing missions [40], air-to-air combat [45] and pilot recovery [34.8, 45].
 import { AIRCRAFT, SQUADRON_CAPACITY, FACILITY_CAPACITY, facilityHex } from '../shared/air.js';
-import { distance, key } from '../shared/hex.js';
+import { distance, key, parseKey } from '../shared/hex.js';
 import { hexFromName, nameOfHex } from '../shared/hexnames.js';
 import { syncStr } from './combat.js';
 
@@ -84,23 +84,59 @@ export function bombResult(table, col, roll) {
   return best;
 }
 
+
+// ---------- Anti-Aircraft Combat Results Table [46.3] ----------
+// Columns by Flak Points: 1-4, 5-8, 9-12, 13-16, 17-20, 21-24, 25-28, 29-32, 33-36, 37+.
+const AA_DESTROYED = rows([
+  [0, '11-55 11-45 11-36 11-32 11-21 11-12 - - - -'],
+  [1, '56-66 46-65 41-62 33-56 22-55 13-53 11-45 11-36 11-32 11-24'],
+  [2, '- 66 63-66 61-64 56-64 54-63 46-61 41-54 33-51 25-43'],
+  [3, '- - - 65-66 65-66 64-66 62-65 55-64 52-62 44-56'],
+  [4, '- - - - - - 66 65-66 63-65 61-64'],
+  [5, '- - - - - - - - 66 65-66'],
+]);
+const AA_ABORTED = rows([
+  [0, '11-53 11-42 11-31 11-22 11-13 - - - - -'],
+  [1, '54-66 43-64 32-62 23-55 14-52 11-44 11-31 11-21 11-12 -'],
+  [2, '- 65-66 63-66 56-64 53-62 45-55 32-52 22-43 13-34 11-26'],
+  [3, '- - - 65-66 63-65 56-63 53-62 44-55 35-51 31-43'],
+  [4, '- - - - 66 64-66 63-66 56-65 52-63 44-54'],
+  [5, '- - - - - - - 66 64-65 55-62'],
+  [6, '- - - - - - - - 66 63-65'],
+  [7, '- - - - - - - - - 66'],
+]);
+const AA_FIGHTER = rows([
+  [0, '11-64 11-56 11-52 11-42 11-31 11-16 - - - -'],
+  [1, '65-66 61-66 53-66 43-66 32-65 21-62 11-56 11-46 11-34 11-16'],
+  [2, '- - - - 66 63-66 61-66 51-64 35-62 21-56'],
+  [3, '- - - - - - - 65-66 63-66 61-66'],
+]);
+export const AA_TABLES = { destroyed: AA_DESTROYED, aborted: AA_ABORTED, fighter: AA_FIGHTER };
+export const flakColumn = (points) => (points <= 0 ? -1 : Math.min(9, Math.floor((points - 1) / 4)));
+// Flak Adjustment Chart [46.4]: columns moved in the firing player's favour by the number of non-fighter planes.
+export const flakShift = (nonFighters) => (nonFighters >= 72 ? 3 : nonFighters >= 48 ? 2 : nonFighters >= 24 ? 1 : 0);
+export function aaResult(table, col, roll) {
+  if (col < 0) return 0;
+  let best = table[0].result;
+  for (const row of table) { const c = row.cols[Math.min(9, col)]; if (c && roll >= c[0] && roll <= c[1]) best = row.result; }
+  return best;
+}
+
 // ---------- Air supply and maintenance ----------
 export const planeInfo = (p) => AIRCRAFT[p.type];
 export const flightReady = (p) => p.ready && p.fueled;
 
-// Fuel the refitted planes (each uses its fuel rate), then arm them (1 Ammo per squadron) [38.3, 38.5].
+// Under the Abstract Logistics rules [47.22, 47.23] a whole squadron is fuelled for 1 Fuel (fighters), 2 (Axis other) or 3 (Commonwealth other),
+// and fighters need no Ammo to be armed while other squadrons are rearmed for 1 Ammo.
 export function fuelAndArm(air, side) {
   const st = air.stock[side];
-  for (const sq of air.squadrons.filter((s) => s.side === side)) {
-    for (const p of sq.planes) {
-      if (!p.ready || p.fueled) continue;
-      const need = planeInfo(p).fuel || 0;
-      if (st.fuel < need) continue;
-      st.fuel -= need;
-      p.fueled = true;
-    }
+  for (const sq of air.squadrons.filter((q) => q.side === side)) {
+    const fighter = sq.kind === 'fighter';
+    const toFuel = sq.planes.filter((p) => p.ready && !p.fueled);
+    const cost = fighter ? 1 : side === 'axis' ? 2 : 3;
+    if (toFuel.length && st.fuel >= cost) { st.fuel -= cost; for (const p of toFuel) p.fueled = true; }
     const unarmed = sq.planes.filter((p) => p.ready && p.fueled && !p.armed);
-    if (unarmed.length && st.ammo >= 1) { st.ammo -= 1; for (const p of unarmed) p.armed = true; }
+    if (unarmed.length && (fighter || st.ammo >= 1)) { if (!fighter) st.ammo -= 1; for (const p of unarmed) p.armed = true; }
   }
 }
 
@@ -322,9 +358,10 @@ export function resolveAir(g, orders, ctx) {
   const flown = new Set(flights.flatMap((f) => f.planes.map((e) => e.p)));
   // 3. Air-to-air combat, hex by hex [45].
   const down = new Set();
+  const abortedSet = new Set();
   const fighting = (hexKey, side) => flights.filter((f) => key(...f.hex) === hexKey && f.side === side && f.kind !== 'strafe' && !isBombMission(f.kind)).flatMap((f) => f.planes).filter((e) => !down.has(e.p));
-  const raiders = (hexKey, side) => flights.filter((f) => key(...f.hex) === hexKey && f.side === side && (f.kind === 'strafe' || isBombMission(f.kind))).flatMap((f) => f.planes).filter((e) => !down.has(e.p));
-  const strafers = (hexKey, side) => flights.filter((f) => key(...f.hex) === hexKey && f.side === side && f.kind === 'strafe').flatMap((f) => f.planes).filter((e) => !down.has(e.p));
+  const raiders = (hexKey, side) => flights.filter((f) => key(...f.hex) === hexKey && f.side === side && (f.kind === 'strafe' || isBombMission(f.kind))).flatMap((f) => f.planes).filter((e) => !down.has(e.p) && !abortedSet.has(e.p));
+  const strafers = (hexKey, side) => flights.filter((f) => key(...f.hex) === hexKey && f.side === side && f.kind === 'strafe').flatMap((f) => f.planes).filter((e) => !down.has(e.p) && !abortedSet.has(e.p));
   const hexes = [...new Set(flights.map((f) => key(...f.hex)))];
   const fight = (att, def, what) => {
     const res = duel(att, def, ctx);
@@ -363,6 +400,62 @@ export function resolveAir(g, orders, ctx) {
       });
     }
   }
+  // 3b. Anti-aircraft fire, after air-to-air combat and before the missions are flown [46.23].
+  const aborted = abortedSet;
+  const gone = (p) => down.has(p) || aborted.has(p);
+  const aaPoints = (enemy, hex, strafing) => {
+    let total = 0;
+    for (const u of ctx.units.filter((x) => x.side === enemy && x.str > 0 && x.pos[0] === hex[0] && x.pos[1] === hex[1])) {
+      const els = u.elements.filter((e) => e.toe > 0 && ctx.weapons[e.w]?.aa > 0 && (strafing || ctx.weapons[e.w].kind === 'aa')); // infantry, recce and tanks only fire at strafers [46.16, 46.22]
+      if (!els.length) continue;
+      if (els.some((e) => ctx.weapons[e.w].kind === 'aa') && !ctx.drawAmmo(u, 1)) { // gun-class AA needs 1 Ammo per target group [47.21]
+        for (let i = els.length - 1; i >= 0; i--) if (ctx.weapons[els[i].w].kind === 'aa') els.splice(i, 1);
+      }
+      total += els.reduce((n, e) => n + e.toe * ctx.weapons[e.w].aa, 0);
+    }
+    return total;
+  };
+  const flakFire = (side, hex, planes, label, { table, strafing, shift = 0, withAbort }) => {
+    const live = planes.filter((e) => !gone(e.p));
+    if (!live.length) return;
+    const pts = aaPoints(other(side), hex, strafing);
+    if (pts <= 0) return;
+    const col = Math.min(9, flakColumn(pts) + shift);
+    const killN = aaResult(table, col, rollD66(ctx));
+    const where = hexName(hex);
+    let hit = [];
+    for (let i = 0; i < killN && live.length; i++) {
+      const pool = live.filter((e) => !down.has(e.p));
+      if (!pool.length) break;
+      const e = pool[(ctx.d6() - 1) % pool.length];
+      down.add(e.p);
+      hit.push(`${e.p.type}: ${recover(e, ctx)}`);
+    }
+    let ab = 0;
+    if (withAbort) {
+      const n = aaResult(AA_ABORTED, col, rollD66(ctx));
+      for (let i = 0; i < n; i++) {
+        const pool = live.filter((e) => !gone(e.p));
+        if (!pool.length) break;
+        aborted.add(pool[(ctx.d6() - 1) % pool.length].p); ab++;
+      }
+    }
+    say(`Flak over ${where} (${pts} flak points) at ${sideName(side)} ${label}: ${killN ? `${killN} plane${killN > 1 ? 's' : ''} shot down` : 'no planes shot down'}${ab ? `, ${ab} turned back` : ''}${hit.length ? ` (${hit.join('; ')})` : ''}.`);
+  };
+  for (const hk of hexes) {
+    const hex = parseKey(hk);
+    for (const side of ['axis', 'cw']) {
+      const mine = flights.filter((f) => key(...f.hex) === hk && f.side === side);
+      if (!mine.length) continue;
+      const bombers = mine.filter((f) => isBombMission(f.kind));
+      const shift = flakShift(bombers.reduce((n, f) => n + f.planes.length, 0));
+      for (const f of bombers) flakFire(side, hex, f.planes, `bombers (${f.sq.name})`, { table: AA_DESTROYED, shift, withAbort: true });
+      const cap = mine.filter((f) => f.kind === 'capO' || f.kind === 'capD').flatMap((f) => f.planes);
+      if (cap.length) flakFire(side, hex, cap, 'patrol fighters', { table: AA_FIGHTER, strafing: false });
+      const straf = mine.filter((f) => f.kind === 'strafe').flatMap((f) => f.planes);
+      if (straf.length) flakFire(side, hex, straf, 'strafing fighters', { table: AA_FIGHTER, strafing: true });
+    }
+  }
   // 4. Strafing by the survivors [40.5].
   for (const hk of hexes) {
     const [c, r] = hk.split(',').map(Number);
@@ -395,7 +488,8 @@ export function resolveAir(g, orders, ctx) {
   }
   // 4b. Bombing by the surviving bombers [41.2-41.3]. Flak is not in the game yet.
   for (const f of flights.filter((x) => isBombMission(x.kind))) {
-    const live = f.planes.filter((e) => !down.has(e.p));
+    const live = f.planes.filter((e) => !down.has(e.p) && !aborted.has(e.p));
+    if (!live.length) { say(`${sideName(f.side)} bombers over ${hexName(f.hex)} are shot down or turned back by flak before they can bomb.`); continue; }
     const tons = live.reduce((n, e) => n + planeInfo(e.p).bomb, 0);
     bombTarget(f, tons, live.length, ctx, (t) => { f.result = t.replace(/^.*?\): /, '').replace(/^.*? over \w+ /, ''); say(t); });
   }
@@ -405,7 +499,7 @@ export function resolveAir(g, orders, ctx) {
     flights: [
       ...flights.map((f) => ({
         side: f.side, name: f.sq.name, kind: f.kind, scrambled: !!f.scrambled, from: f.from, to: f.hex,
-        sent: f.planes.length, lost: f.planes.filter((e) => down.has(e.p)).length, result: f.result || '',
+        sent: f.planes.length, lost: f.planes.filter((e) => down.has(e.p)).length, aborted: f.planes.filter((e) => aborted.has(e.p) && !down.has(e.p)).length, result: f.result || '',
       })),
       ...grounded,
     ],

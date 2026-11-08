@@ -569,7 +569,7 @@ function lastAirReport() {
     const mine = f.side === me;
     const where = esc(nameOfHex(...f.to));
     const what = AIR_VERB[f.kind] || f.kind;
-    const out = f.failed ? esc(f.result) : `${f.sent} plane${f.sent === 1 ? '' : 's'}${f.lost ? `, ${f.lost} lost` : ''}${f.result ? `: ${esc(f.result)}` : ''}`;
+    const out = f.failed ? esc(f.result) : `${f.sent} plane${f.sent === 1 ? '' : 's'}${f.lost ? `, ${f.lost} lost` : ''}${f.aborted ? `, ${f.aborted} turned back` : ''}${f.result ? `: ${esc(f.result)}` : ''}`;
     return `<tr class="${mine ? '' : 'warn'}"><td>${mine ? esc(f.name) : 'Enemy'}</td><td>${f.scrambled ? 'scrambled to ' : ''}${what}</td><td>${where}</td><td>${out}</td></tr>`;
   }).join('');
   return `<h3>Last air phase <span class="muted">(Game-Turn ${la.turn}, Operations Stage ${la.stage})</span></h3>${rows ? `<table class="grid"><tr><th>Flight</th><th>Mission</th><th>Over</th><th>Result</th></tr>${rows}</table>` : '<p class="muted">No missions were flown.</p>'}`;

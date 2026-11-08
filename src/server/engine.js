@@ -374,6 +374,7 @@ function resolveAirPhase(g, orders) {
     d6: () => d6(g), log: (side, text) => log(g, side, text), map, units: g.units, weapons: WEAPONS,
     turn: g.turn, opStage: g.opStage, firstTurn: scenarioOf(g).firstTurn, holder: g.initiative.holder,
     weatherAt: (hex) => weatherAt(g, hex),
+    drawAmmo: (u, n) => draw(g.supply, supplyCtx(g, u.side), u, 'ammo', n),
     supplyUnitsAt: (hex, side) => g.supply.units.filter((x) => x.side === side && x.pos[0] === hex[0] && x.pos[1] === hex[1]),
     supplyAt: (hex, side) => g.supply.units.some((x) => x.side === side && x.pos[0] === hex[0] && x.pos[1] === hex[1]),
   };
