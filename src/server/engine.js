@@ -958,7 +958,7 @@ export function viewFor(g, side) {
   for (const x of g.supply.units.filter((y) => y.side !== side && seen(y.pos))) supply.push({ id: x.id, side: x.side, pos: x.pos, own: false });
   const ownView = own.map((u) => {
     const src = suppliesInRange(g.supply, sctx, u);
-    const need = fuelNeed(u), fuel = src.reduce((a, x) => a + x.fuel, 0), ammo = src.reduce((a, x) => a + x.ammo, 0);
+    const need = u.fuelPaid ? 0 : fuelNeed(u), fuel = src.reduce((a, x) => a + x.fuel, 0), ammo = src.reduce((a, x) => a + x.ammo, 0);
     const ammoNeed = isCombatUnit(u) ? ammoCost(u, true) : 0;
     const lacking = { needFuel: need > fuel, needAmmo: ammoNeed > ammo, ammoNeed };
     return {

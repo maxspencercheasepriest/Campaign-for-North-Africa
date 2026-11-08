@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, victoryStatus, victoryPoints, instantWinner } from '../src/server/engine.js';
+import { createGame, viewFor, submitOrders, victoryStatus, victoryPoints, instantWinner } from '../src/server/engine.js';
 import { SCENARIOS, buildMap } from '../src/shared/scenario.js';
 
 test('scenarios share the 1940 start but differ in length and victory', () => {
@@ -41,7 +41,6 @@ test('Graziani keeps the short tiered victory and no early outright win', () => 
   assert.equal(victoryStatus(g).mode, undefined);
 });
 
-import { submitOrders } from '../src/server/engine.js';
 import { landConvoys } from '../src/server/supply.js';
 
 test('Axis convoys are assigned in the Convoy Stage and land in the chosen Operations Stage [32.62, 20.63]', () => {
@@ -132,4 +131,12 @@ test('a probe costs far less ammunition than a full attack', async () => {
   const u = g.units.find((x) => x.id === 'it-63');
   assert.equal(ammoCost(u, true, { probe: true }), 2);
   assert.ok(ammoCost(u, true) > 2);
+});
+
+test('a unit that has already paid its fuel this stage is not shown as short of fuel after it moves away', () => {
+  const g = createGame({ seed: 1 });
+  const u = g.units.find((x) => x.id === 'it-63');
+  u.fuelPaid = true;
+  const v = viewFor(g, 'axis').units.find((x) => x.id === 'it-63');
+  assert.equal(v.fuelNeed, 0);
 });
