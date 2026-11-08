@@ -1,7 +1,7 @@
 // Unit tests for rules implemented from the rulebook (engine level, no networking).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, submitOrders, act, planMove, inEnemyZoc, actingSides, gameMap } from '../src/server/engine.js';
+import { createGame, submitOrders, act, planMove, inEnemyZoc, actingSides, gameMap, viewFor } from '../src/server/engine.js';
 import { turnDate, initiativeRating, stepCost, edgeKey } from '../src/shared/rules.js';
 import { key, distance, neighbours } from '../src/shared/hex.js';
 import { hexFromName, nameOfHex } from '../src/shared/hexnames.js';
@@ -135,6 +135,24 @@ test('zones of control: stop on entry, no ZOC-to-ZOC, mandatory attack', () => {
   assert.equal(act(g, 'cw', { action: 'defend', tankRole: 'antiArmour' }), null);
   assert.ok(mal.cpUsed >= 5, 'assault costs the phasing unit 5 CP');
   assert.equal(act(g, 'axis', { action: 'endPhase' }), null);
+});
+
+test('a mandatory attack is waived when no unit can make it (no ammunition in reach)', () => {
+  const g = createGame({ seed: 1 });
+  toMoveCombat(g);
+  const mal = g.units.find((x) => x.id === 'it-mal');
+  const arm = g.units.find((x) => x.id === 'cw-7arm');
+  arm.pos = [mal.pos[0] + 2, mal.pos[1]];
+  for (const h of [mal.pos, [mal.pos[0] + 1, mal.pos[1]], arm.pos]) gameMap().tiles[key(...h)].t = 'clear';
+  g.supply.units.push({ id: 'T-ax', side: 'axis', pos: [...mal.pos], ammo: 0, fuel: 60 });
+  g.supply.units.push({ id: 'T-cw', side: 'cw', pos: [...arm.pos], ammo: 40, fuel: 60 });
+  for (const x of g.supply.units.filter((y) => y.side === 'axis')) x.ammo = 0;
+  arm.engaged = true;
+  assert.equal(act(g, 'axis', { action: 'move', unitId: mal.id, path: [[mal.pos[0] + 1, mal.pos[1]]] }), null);
+  act(g, 'axis', { action: 'toCombat' });
+  const ob = viewFor(g, 'axis').obligations;
+  assert.ok(ob.length && ob.every((o) => o.cannot), 'the obligation is shown as waived');
+  assert.equal(act(g, 'axis', { action: 'endPhase' }), null, 'with no ammunition the phase can end');
 });
 
 test('reaction: a motorised unit may slip away from a slower approaching enemy [8.5]', () => {

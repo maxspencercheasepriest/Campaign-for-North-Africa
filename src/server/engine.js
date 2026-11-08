@@ -767,8 +767,24 @@ export function attackObligations(g, side) {
   }
   return out;
 }
+// An obligation to attack is waived when none of the units it binds are able to attack that hex: next to it, not collapsed,
+// not barred by the terrain or Reserve rules, and with at least the Ammo for a probe in reach [10.31 "if able", 32.21].
+function whyCannotAttack(g, side, u, enemy) {
+  if (distance(u.pos, enemy.pos) !== 1) return 'not adjacent';
+  if (collapsed(u)) return 'too disorganised';
+  if (u.reserve) return 'in Reserve';
+  if (u.relFrom && (u.assaults || 0) >= 1) return 'already attacked out of Reserve';
+  const map = gameMap();
+  const e = map.hexsides[edgeKey(u.pos, enemy.pos)];
+  if (u.motorised && e?.type === 'escarpment' && e.down === key(...u.pos)) return 'cannot assault up an escarpment';
+  if (u.motorised && map.tiles[key(...enemy.pos)].t === 'saltmarsh') return 'cannot assault into a salt marsh';
+  const have = suppliesInRange(g.supply, supplyCtx(g, side), u).reduce((t, x) => t + x.ammo, 0);
+  if (have < ammoCost(u, true, { probe: true })) return 'no ammunition in reach';
+  return null;
+}
+export const canMeetObligation = (g, side, o) => o.threatened.some((u) => !whyCannotAttack(g, side, u, o.enemy));
 function unmetAttackObligations(g, side) {
-  const unmet = attackObligations(g, side).filter((o) => !g.seg.attacked.includes(key(...o.enemy.pos)));
+  const unmet = attackObligations(g, side).filter((o) => !g.seg.attacked.includes(key(...o.enemy.pos)) && canMeetObligation(g, side, o));
   if (!unmet.length) return null;
   return `Units in an enemy zone of control must attack it before the segment ends [10.31]: ${unmet.map((o) => o.enemy.name).join(', ')}.`;
 }
@@ -1009,7 +1025,7 @@ function buildView(g, side) {
     };
   });
   const obligations = g.step === 'movecombat' && phasingSide(g) === side
-    ? attackObligations(g, side).filter((o) => seen(o.enemy.pos)).map((o) => ({ enemyId: o.enemy.id, hex: key(...o.enemy.pos), met: g.seg.attacked.includes(key(...o.enemy.pos)) }))
+    ? attackObligations(g, side).filter((o) => seen(o.enemy.pos)).map((o) => ({ enemyId: o.enemy.id, hex: key(...o.enemy.pos), met: g.seg.attacked.includes(key(...o.enemy.pos)), cannot: !canMeetObligation(g, side, o) }))
     : [];
   return {
     turn: g.turn,

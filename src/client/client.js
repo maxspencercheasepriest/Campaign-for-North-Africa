@@ -432,7 +432,7 @@ function obligationList() {
   if (!ob.length) return '';
   return `<p class="help"><b>Must attack</b> before the segment ends (enemy zones of control on your units):</p><ul class="orders">${ob.map((o) => {
     const e = S.game.units.find((u) => u.id === o.enemyId);
-    return `<li>${esc(e?.name || o.hex)} ${o.met ? '<span class="ok">✓</span>' : '<span class="bad">outstanding</span>'}</li>`;
+    return `<li>${esc(e?.name || o.hex)} ${o.met ? '<span class="ok">✓</span>' : o.cannot ? '<span class="muted">can\'t attack: waived (no ammo in reach, disorganised or barred)</span>' : '<span class="bad">outstanding</span>'}</li>`;
   }).join('')}</ul>`;
 }
 
