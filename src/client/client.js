@@ -450,6 +450,7 @@ function airForm() {
         <option value="bRD" ${m.kind === 'bRD' ? 'selected' : ''}>Bomb a road in…</option>
         <option value="bRR" ${m.kind === 'bRR' ? 'selected' : ''}>Bomb a railway in…</option>
         <option value="bFC" ${m.kind === 'bFC' ? 'selected' : ''}>Bomb a city's fortifications in…</option>
+        <option value="bPT" ${m.kind === 'bPT' ? 'selected' : ''}>Bomb a port in…</option>
         <option value="bTC" ${m.kind === 'bTC' ? 'selected' : ''}>Bomb trucks in…</option>` : `<option value="scramble" ${m.kind === 'scramble' ? 'selected' : ''}>Scramble against raiders</option>
         <option value="capO" ${m.kind === 'capO' ? 'selected' : ''}>Offensive patrol over…</option>
         <option value="capD" ${m.kind === 'capD' ? 'selected' : ''}>Defensive patrol over…</option>
@@ -554,7 +555,7 @@ function renderSupply() {
 // ---------- Air tab (Air Game, stage 1: forces and bases) ----------
 let airSeen = null; // number of the last air phase the map has shown
 let airAnim = null;
-const AIR_VERB = { capO: 'offensive patrol', capD: 'defensive patrol', strafe: 'strafing', bCU: 'bombing troops', bSD: 'bombing a supply dump', bAF: 'bombing an air facility', bRD: 'bombing a road', bRR: 'bombing a railway', bFC: 'bombing fortifications', bTC: 'bombing trucks' };
+const AIR_VERB = { capO: 'offensive patrol', capD: 'defensive patrol', strafe: 'strafing', bCU: 'bombing troops', bSD: 'bombing a supply dump', bAF: 'bombing an air facility', bRD: 'bombing a road', bRR: 'bombing a railway', bFC: 'bombing fortifications', bTC: 'bombing trucks', bPT: 'bombing a port' };
 function startAirAnim() {
   airAnim = { start: performance.now(), dur: 3600 };
   const tick = () => {
@@ -897,6 +898,7 @@ function drawDamage() {
   for (const k of dm.roads) cross(k, '#c11');
   for (const k of dm.rails) cross(k, '#2f7fbf');
   ctx.font = `bold ${Math.max(8, s * 0.32)}px sans-serif`; ctx.textAlign = 'center';
+  for (const pt of dm.ports || []) { const p = centre(...pt.hex); ctx.fillStyle = '#2f7fbf'; ctx.fillText(`Port ${pt.eff}/${pt.max}`, p.x, p.y - s * 0.6); }
   for (const f of dm.fort) { const [c, r] = f.hex.split(',').map(Number), p = centre(c, r); ctx.fillStyle = '#c11'; ctx.fillText(`F${f.level}/${f.base}`, p.x, p.y + s * 0.75); }
 }
 

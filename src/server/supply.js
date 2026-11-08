@@ -237,7 +237,7 @@ export function scheduleConvoys(sup, { order, turn, log }) {
 }
 
 // Naval Convoy Arrival Phase of one Operations Stage: bomb and land the convoys due now.
-export function landConvoys(sup, map, { units, turn, stage, rollD66, log, portOwners }) {
+export function landConvoys(sup, map, { units, turn, stage, rollD66, log, portOwners, portShare = () => 1 }) {
   const due = (sup.convoys || []).filter((c) => c.turn === turn && c.stage === stage);
   sup.convoys = (sup.convoys || []).filter((c) => !due.includes(c));
   for (const c of due) {
@@ -256,7 +256,10 @@ export function landConvoys(sup, map, { units, turn, stage, rollD66, log, portOw
     }
     const hex = [port.col, port.row];
     let landed = 0;
-    for (const b of c.units.slice(0, n - lost)) {
+    // A bombed port handles only its efficiency share of the load; the rest goes back to the box [55.14].
+    const room = Math.ceil((n - lost) * portShare(port.id));
+    c.units.slice(room, n - lost).forEach((b) => sup.box.axis.push(b));
+    for (const b of c.units.slice(0, Math.min(room, n - lost))) {
       if (supplyAt(sup, hex, 'axis').length >= supplyStackLimit(map, hex)) { sup.box.axis.push(b); continue; }
       sup.units.push({ id: `su${sup.nextId++}`, side: 'axis', pos: hex, ammo: b.ammo, fuel: b.fuel, mp: 30 }); landed++;
     }

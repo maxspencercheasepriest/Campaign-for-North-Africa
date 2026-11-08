@@ -15,7 +15,7 @@
 import { REINFORCEMENTS } from '../shared/reinforcements.js';
 import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
-import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, newDamage, repairDamage, fortLevel, fortBase } from './air.js';
+import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, repairPorts, portEff, portMax, newDamage, repairDamage, fortLevel, fortBase } from './air.js';
 import {
   SIDES, accessFor, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
   buildMap, initialUnits, initialSupply, initialPortOwners, VISION_RANGE,
@@ -189,6 +189,7 @@ function startOpStage(g, n) {
   g.opStage = n;
   for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; u.fuelPaid = false; u.reserve = 0; u.relFrom = 0; u.relCap = null; u.assaults = 0; u.resDp = false; for (const e of u.elements || []) e.airPin = 0; }
   resetMoved(g.supply);
+  repairPorts(g);
   convoyArrivalPhase(g);
   rollWeather(g);
   if (g.weather.type === 'hot') hotWeatherLoss(g.supply);
@@ -388,14 +389,15 @@ function supplyCtx(g, side) {
 
 function damageView(g) {
   const d = g.damage || newDamage();
-  return { roads: Object.keys(d.roads), rails: Object.keys(d.rails), fort: Object.keys(d.fort).map((k) => ({ hex: k, level: fortLevel(d, k.split(',').map(Number)), base: fortBase(k.split(',').map(Number)) })) };
+  const ports = LOCATIONS.filter((l) => l.port && portEff(g, l.id) < portMax(l.id)).map((l) => ({ id: l.id, name: l.name, hex: l.hexes[0], eff: portEff(g, l.id), max: portMax(l.id) }));
+  return { ports, roads: Object.keys(d.roads), rails: Object.keys(d.rails), fort: Object.keys(d.fort).map((k) => ({ hex: k, level: fortLevel(d, k.split(',').map(Number)), base: fortBase(k.split(',').map(Number)) })) };
 }
 
 function resolveAirPhase(g, orders) {
   g.damage ||= newDamage();
   const map = mapFor(g);
   const ctx = {
-    d6: () => d6(g), log: (side, text) => log(g, side, text), map, damage: g.damage, units: g.units, weapons: WEAPONS,
+    d6: () => d6(g), log: (side, text) => log(g, side, text), map, game: g, portOwners: g.portOwners, damage: g.damage, units: g.units, weapons: WEAPONS,
     turn: g.turn, opStage: g.opStage, firstTurn: scenarioOf(g).firstTurn, holder: g.initiative.holder,
     weatherAt: (hex) => weatherAt(g, hex),
     drawAmmo: (u, n) => draw(g.supply, supplyCtx(g, u.side), u, 'ammo', n),
@@ -440,7 +442,7 @@ function reinforcementArrivals(g) {
 function convoyArrivalPhase(g) {
   reinforcementArrivals(g);
   landConvoys(g.supply, gameMap(), {
-    units: g.units, turn: g.turn, stage: g.opStage, rollD66: () => d6(g) * 10 + d6(g), portOwners: g.portOwners,
+    units: g.units, turn: g.turn, stage: g.opStage, rollD66: () => d6(g) * 10 + d6(g), portOwners: g.portOwners, portShare: (id) => portEff(g, id) / portMax(id),
     log: (side, text) => log(g, side, text),
   });
 }

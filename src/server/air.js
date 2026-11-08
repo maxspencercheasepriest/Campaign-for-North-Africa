@@ -96,6 +96,20 @@ export function fortBase(hex) {
   return loc && /cairo|alexandria/i.test(loc.name) ? 3 : 2;
 }
 export const fortLevel = (d, hex) => Math.max(0, fortBase(hex) - ((d?.fort || {})[key(...hex)] || 0));
+// ---------- Port efficiency [55.12-55.18] ----------
+const PORT_MAX = { tripoli: 10, alexandria: 10, tobruk: 5, benghazi: 3 }; // every other port is 1 [55.3]
+export const portMax = (id) => PORT_MAX[id] ?? 1;
+export const portEff = (g, id) => g.portEff?.[id] ?? portMax(id);
+// A port that lost no levels to bombs in the last Operations Stage regains one [55.18].
+export function repairPorts(g) {
+  g.portEff ||= {};
+  for (const l of LOCATIONS.filter((x) => x.port)) {
+    const e = portEff(g, l.id);
+    if (!g.portLost?.[l.id] && e < portMax(l.id)) g.portEff[l.id] = e + 1;
+  }
+  g.portLost = {};
+}
+
 // Rebuilding stand-in (the Construction rules are not built yet): each Game-Turn, a land combat unit alone in a damaged hex puts one road, railway or fortification level right.
 export function repairDamage(g) {
   const d = g.damage; if (!d) return;
@@ -208,8 +222,8 @@ export function returnPilots(air, turn) {
 }
 
 // ---------- Orders ----------
-export const MISSION_KINDS = { capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility', bRD: 'Bomb a road', bRR: 'Bomb a railway', bFC: 'Bomb a fortification', bTC: 'Bomb trucks' };
-const BOMB_KINDS = ['bCU', 'bSD', 'bAF', 'bRD', 'bRR', 'bFC', 'bTC'];
+export const MISSION_KINDS = { capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility', bRD: 'Bomb a road', bRR: 'Bomb a railway', bFC: 'Bomb a fortification', bTC: 'Bomb trucks', bPT: 'Bomb a port' };
+const BOMB_KINDS = ['bCU', 'bSD', 'bAF', 'bRD', 'bRR', 'bFC', 'bTC', 'bPT'];
 export const isBombMission = (k) => BOMB_KINDS.includes(k);
 
 // Planes of a squadron that can fly the mission right now.
@@ -359,6 +373,14 @@ function bombTarget(f, tons, n, ctx, say) {
     const hit = fortReduced(col, roll);
     if (hit) { ctx.damage.fort[hk] = (ctx.damage.fort[hk] || 0) + 1; ctx.damage.fortHit[hk] = stamp; }
     say(`${tag} (d66 ${roll}): ${hit ? `fortification reduced to Level ${lv - 1}.` : 'no effect.'}`);
+  } else if (f.kind === 'bPT') {
+    const port = LOCATIONS.find((l) => l.port && l.hexes.some((h) => h[0] === hex[0] && h[1] === hex[1]));
+    if (!port || ctx.portOwners?.[port.id] === side) { say(`${tag}: no enemy port there.`); return; }
+    const g = ctx.game, eff = portEff(g, port.id);
+    const lv = Math.min(eff, bombResult(FAC_ROWS, col, roll));
+    g.portEff ||= {}; g.portEff[port.id] = eff - lv;
+    if (lv) (g.portLost ||= {})[port.id] = true;
+    say(`${tag} (d66 ${roll}): ${port.name} ${lv ? `loses ${lv} efficiency level${lv > 1 ? 's' : ''}, now ${eff - lv} of ${portMax(port.id)}` : 'is not hurt'}.`);
   } else if (f.kind === 'bTC') {
     const dumps = ctx.supplyUnitsAt(hex, enemy);
     if (!dumps.length) { say(`${tag}: no trucks there.`); return; }

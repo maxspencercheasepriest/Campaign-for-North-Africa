@@ -418,7 +418,7 @@ async function bombRun(g, kind, hexKey, extra = {}) {
   for (const p of sq.planes.slice(0, 8)) { p.ready = p.fueled = p.armed = true; }
   const lines = [];
   const ctx = {
-    map: mapFor(g), damage: g.damage, units: g.units, weapons: {}, d6: () => 6, log: (s, t) => lines.push(t),
+    map: mapFor(g), damage: g.damage, game: g, portOwners: g.portOwners, units: g.units, weapons: {}, d6: () => 6, log: (s, t) => lines.push(t),
     supplyUnitsAt: (h, side) => g.supply.units.filter((x) => x.side === side && x.pos[0] === h[0] && x.pos[1] === h[1]),
     supplyAt: () => false, weatherAt: () => 'normal', turn: 3, opStage: 1, firstTurn: 1, holder: 'cw', ...extra,
   };
@@ -479,4 +479,35 @@ test('bombing trucks cuts the Motorization Points of enemy supply units', async 
   const text = await bombRun(g, 'bTC', `${dump.pos[0]},${dump.pos[1]}`);
   assert.match(text, /Truck Points? destroyed/);
   assert.ok(dump.mp < 30);
+});
+
+test('bombing a port cuts its efficiency; it regains one level per quiet Operations Stage and limits convoy landings', async () => {
+  const { repairPorts, portEff } = await import('../src/server/air.js');
+  const { landConvoys, createSupply } = await import('../src/server/supply.js');
+  const { LOCATIONS } = await import('../src/shared/locations.js');
+  const { facilityHex } = await import('../src/shared/air.js');
+  const { distance } = await import('../src/shared/hex.js');
+  const g = createGame({ seed: 7, air: 'on' });
+  const base = facilityHex(g.air.facilities.find((f) => f.id === 'matruh'));
+  const port = LOCATIONS.filter((l) => l.port && g.portOwners[l.id] === 'axis' && (l.id === 'tobruk' || l.id === 'bardia' || l.id === 'benghazi'))
+    .sort((a, b) => distance(base, a.hexes[0]) - distance(base, b.hexes[0]))[0];
+  assert.equal(portEff(g, port.id) > 0, true);
+  const before = portEff(g, port.id);
+  const text = await bombRun(g, 'bPT', `${port.hexes[0][0]},${port.hexes[0][1]}`);
+  assert.match(text, /loses \d efficiency level|is not hurt/);
+  const after = portEff(g, port.id);
+  assert.ok(after <= before);
+  if (after < before) {
+    assert.equal(viewFor(g, 'cw').damage.ports.find((p) => p.id === port.id).eff, after);
+    repairPorts(g); // this Operations Stage lost levels, so nothing is regained yet
+    assert.equal(portEff(g, port.id), after);
+    repairPorts(g);
+    assert.equal(portEff(g, port.id), Math.min(before, after + 1));
+  }
+  // A convoy into a half-efficient port lands only half its units; the rest return to the box.
+  const sup = createSupply({ units: [], box: { axis: [], cw: [] } });
+  sup.convoys = [{ turn: 1, stage: 1, port: 'tobruk', route: 2, units: Array.from({ length: 4 }, () => ({ ammo: 1, fuel: 1 })) }];
+  landConvoys(sup, (await import('../src/server/engine.js')).gameMap(), { units: [], turn: 1, stage: 1, rollD66: () => 11, log: () => {}, portOwners: { tobruk: 'axis' }, portShare: () => 0.5 });
+  assert.equal(sup.units.length, 2);
+  assert.equal(sup.box.axis.length, 2);
 });
