@@ -5,6 +5,7 @@ import { AIRCRAFT, SQUADRON_CAPACITY, FACILITY_CAPACITY, facilityHex } from '../
 import { distance, key, parseKey } from '../shared/hex.js';
 import { hexFromName, nameOfHex } from '../shared/hexnames.js';
 import { syncStr } from './combat.js';
+import { LOCATIONS } from '../shared/locations.js';
 
 const other = (s) => (s === 'axis' ? 'cw' : 'axis');
 const sideName = (s) => (s === 'axis' ? 'Axis' : 'Commonwealth');
@@ -77,6 +78,33 @@ const PIN_ROWS = rows([
 ]);
 export const BOMB_TABLES = { facility: FAC_ROWS, dump: DUMP_ROWS, pin: PIN_ROWS };
 const _ = null; void _;
+
+// Fortification, Railroad and Road rows of the same table: the lowest d66 that gives the damaging result, by column [41.5].
+const FORT_T = [66, 64, 61, 53, 44, 34, 25, 21, 14, 12, 11];
+const RAIL_T = [64, 62, 54, 44, 33, 23, 15, 11, 11, 11, 11];
+const ROAD_T = [66, 64, 61, 52, 41, 26, 21, 14, 11, 11, 11];
+export const fortReduced = (col, roll) => col >= 0 && roll >= FORT_T[col];
+export const railDestroyed = (col, roll) => col >= 0 && roll >= RAIL_T[col];
+export const roadDestroyed = (col, roll) => col >= 0 && roll >= ROAD_T[col];
+
+// ---------- Damage to roads, railways and fortifications ----------
+// g.damage = { roads:{hexKey:turn}, rails:{hexKey:turn}, fort:{hexKey:levelsLost}, fortHit:{hexKey:'turn.stage'} }
+export const newDamage = () => ({ roads: {}, rails: {}, fort: {}, fortHit: {} });
+// Major cities are Level 2 fortifications; Cairo and Alexandria Level 3 [25.12].
+export function fortBase(hex) {
+  const loc = LOCATIONS.find((l) => l.city && l.hexes.some((h) => h[0] === hex[0] && h[1] === hex[1]));
+  return loc && /cairo|alexandria/i.test(loc.name) ? 3 : 2;
+}
+export const fortLevel = (d, hex) => Math.max(0, fortBase(hex) - ((d?.fort || {})[key(...hex)] || 0));
+// Rebuilding stand-in (the Construction rules are not built yet): each Game-Turn, a land combat unit alone in a damaged hex puts one road, railway or fortification level right.
+export function repairDamage(g) {
+  const d = g.damage; if (!d) return;
+  const here = (k) => g.units.filter((u) => u.str > 0 && u.type !== 'hq' && u.type !== 'truck' && key(...u.pos) === k);
+  const ok = (k) => { const us = here(k); return us.length && us.every((u) => u.side === us[0].side); };
+  for (const k of Object.keys(d.roads)) if (ok(k)) delete d.roads[k];
+  for (const k of Object.keys(d.rails)) if (ok(k)) delete d.rails[k];
+  for (const k of Object.keys(d.fort)) if (ok(k)) { d.fort[k] -= 1; if (d.fort[k] <= 0) delete d.fort[k]; }
+}
 export function bombResult(table, col, roll) {
   if (col < 0) return 0;
   let best = table[0].result;
@@ -180,8 +208,8 @@ export function returnPilots(air, turn) {
 }
 
 // ---------- Orders ----------
-export const MISSION_KINDS = { capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility' };
-const BOMB_KINDS = ['bCU', 'bSD', 'bAF'];
+export const MISSION_KINDS = { capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility', bRD: 'Bomb a road', bRR: 'Bomb a railway', bFC: 'Bomb a fortification', bTC: 'Bomb trucks' };
+const BOMB_KINDS = ['bCU', 'bSD', 'bAF', 'bRD', 'bRR', 'bFC', 'bTC'];
 export const isBombMission = (k) => BOMB_KINDS.includes(k);
 
 // Planes of a squadron that can fly the mission right now.
@@ -271,6 +299,17 @@ function recover(ent, ctx) {
 }
 
 
+// Truck Points are the 30 Motorization Points each supply unit carries; a supply unit below 30 cannot move [32.32]. Losses are spread evenly [41.32].
+function truckHits(units, n, ctx) {
+  let lost = 0;
+  for (let i = 0; i < n; i++) {
+    const u = units.filter((x) => x.mp > 0).sort((a, b) => b.mp - a.mp)[0];
+    if (!u) break;
+    u.mp -= 1; lost++;
+  }
+  return lost;
+}
+
 // Apply one bombing mission's result to its target hex.
 function bombTarget(f, tons, n, ctx, say) {
   const side = f.side, hex = f.hex, enemy = other(side);
@@ -280,7 +319,7 @@ function bombTarget(f, tons, n, ctx, say) {
   if (!n) return;
   const roll = rollD66(ctx);
   if (f.kind === 'bCU') {
-    if (ctx.map.tiles[key(...hex)]?.t === 'majorcity') { say(`${tag}: units in a major city cannot be bombed.`); return; }
+    if (ctx.map.tiles[key(...hex)]?.t === 'majorcity' && fortLevel(ctx.damage, hex) > 1) { say(`${tag}: units in a major city cannot be bombed until its fortification is down to Level 1 [41.31].`); return; }
     const targets = ctx.units.filter((u) => u.side === enemy && u.str > 0 && u.type !== 'hq' && u.pos[0] === hex[0] && u.pos[1] === hex[1]);
     if (!targets.length) { say(`${tag}: no enemy troops there.`); return; }
     let points = bombResult(PIN_ROWS, col, roll);
@@ -301,7 +340,31 @@ function bombTarget(f, tons, n, ctx, say) {
     if (!dumps.length) { say(`${tag}: no supply dump there.`); return; }
     const pct = bombResult(DUMP_ROWS, col, roll);
     for (const d of dumps) { d.ammo = Math.floor(d.ammo * (1 - pct / 100)); d.fuel = Math.floor(d.fuel * (1 - pct / 100)); }
-    say(`${tag} (d66 ${roll}): ${pct}% of the supplies in the dump destroyed.`);
+    const lostTrucks = truckHits(dumps, pct / 10, ctx);
+    say(`${tag} (d66 ${roll}): ${pct}% of the supplies in the dump destroyed${lostTrucks ? `, and ${lostTrucks} Truck Point${lostTrucks > 1 ? 's' : ''} with them` : ''}.`);
+  } else if (f.kind === 'bRD' || f.kind === 'bRR') {
+    const road = f.kind === 'bRD', hk = key(...hex), set = road ? ctx.damage.roads : ctx.damage.rails;
+    const lines = road ? ctx.map.roads : ctx.map.rails;
+    const has = [...(lines || [])].some((ek) => ek.split('|').includes(hk));
+    if (!has) { say(`${tag}: no ${road ? 'road' : 'railway'} left in that hex.`); return; }
+    const hit = (road ? roadDestroyed : railDestroyed)(col, roll);
+    if (hit) set[hk] = ctx.turn;
+    say(`${tag} (d66 ${roll}): ${hit ? `the ${road ? 'road' : 'railway'} in that hex is destroyed${road ? ' and counts as a track [24.52]' : ''}.` : 'no effect.'}`);
+  } else if (f.kind === 'bFC') {
+    const hk = key(...hex), stamp = `${ctx.turn}.${ctx.opStage}`;
+    if (ctx.map.tiles[hk]?.t !== 'majorcity') { say(`${tag}: no fortification there to bomb (only major cities are fortified so far).`); return; }
+    const lv = fortLevel(ctx.damage, hex);
+    if (lv < 1) { say(`${tag}: the fortification is already at Level 0.`); return; }
+    if (ctx.damage.fortHit[hk] === stamp) { say(`${tag}: only one fortification level can be destroyed per Operations Stage [41.37].`); return; }
+    const hit = fortReduced(col, roll);
+    if (hit) { ctx.damage.fort[hk] = (ctx.damage.fort[hk] || 0) + 1; ctx.damage.fortHit[hk] = stamp; }
+    say(`${tag} (d66 ${roll}): ${hit ? `fortification reduced to Level ${lv - 1}.` : 'no effect.'}`);
+  } else if (f.kind === 'bTC') {
+    const dumps = ctx.supplyUnitsAt(hex, enemy);
+    if (!dumps.length) { say(`${tag}: no trucks there.`); return; }
+    if (ctx.map.tiles[key(...hex)]?.t === 'majorcity' && fortLevel(ctx.damage, hex) > 0) { say(`${tag}: trucks in a major city cannot be bombed until its fortification is at Level 0 [41.32].`); return; }
+    const n2 = truckHits(dumps, bombResult(PIN_ROWS, col, roll), ctx);
+    say(`${tag} (d66 ${roll}): ${n2 ? `${n2} Truck Point${n2 > 1 ? 's' : ''} destroyed.` : 'no trucks destroyed.'}`);
   } else if (f.kind === 'bAF') {
     const fac = ctx.air.facilities.find((x) => x.owner === enemy && x.hex && facilityHex(x) && key(...facilityHex(x)) === key(...hex));
     if (!fac) { say(`${tag}: no enemy air facility there.`); return; }

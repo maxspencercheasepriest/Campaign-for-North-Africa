@@ -15,7 +15,7 @@
 import { REINFORCEMENTS } from '../shared/reinforcements.js';
 import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
-import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities } from './air.js';
+import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, newDamage, repairDamage, fortLevel, fortBase } from './air.js';
 import {
   SIDES, accessFor, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
   buildMap, initialUnits, initialSupply, initialPortOwners, VISION_RANGE,
@@ -51,6 +51,23 @@ export const STEPS = {
 let mapCache = null;
 export const gameMap = () => (mapCache ||= buildMap());
 
+// The map as this game has it: hexes whose road or railway was bombed lose it, and a destroyed road counts as a track [24.52].
+const damaged = new WeakMap();
+export function mapFor(g) {
+  const base = gameMap(), d = g.damage;
+  if (!d || (!Object.keys(d.roads).length && !Object.keys(d.rails).length)) return base;
+  const sig = JSON.stringify([Object.keys(d.roads).sort(), Object.keys(d.rails).sort()]);
+  const c = damaged.get(g);
+  if (c && c.sig === sig) return c.map;
+  const hit = (ek, set) => ek.split('|').some((k) => k in set);
+  const roads = new Set(), tracks = new Set(base.tracks), rails = new Set();
+  for (const ek of base.roads) { if (hit(ek, d.roads)) tracks.add(ek); else roads.add(ek); }
+  for (const ek of base.rails || []) if (!hit(ek, d.rails)) rails.add(ek);
+  const map = { ...base, roads, tracks, rails };
+  damaged.set(g, { sig, map });
+  return map;
+}
+
 export function createGame(options = {}) {
   const g = {
     version: 7,
@@ -66,6 +83,7 @@ export function createGame(options = {}) {
     units: initialUnits(),
     supply: createSupply(initialSupply(options.stock === 'generous' ? 2 : 1)),
     air: createAir(),
+    damage: newDamage(),
     portOwners: initialPortOwners(),
     pending: { axis: null, cw: null },
     ready: { axis: false, cw: false },
@@ -143,7 +161,7 @@ function startGameTurn(g) {
   g.order = null;
   g.half = null;
   returnPilots(g.air, g.turn);
-  if (g.turn > scenarioOf(g).firstTurn) repairFacilities(g.air);
+  if (g.turn > scenarioOf(g).firstTurn) { repairFacilities(g.air); repairDamage(g); }
   setStep(g, 'convoy');
 }
 
@@ -358,7 +376,7 @@ function validateOrders(g, side, step, o) {
 
 // Supply and reach need to know about enemies and weather.
 function supplyCtx(g, side) {
-  const map = gameMap();
+  const map = mapFor(g);
   const enemyHexes = new Set(g.units.filter((u) => u.side !== side && u.str > 0).map((u) => key(...u.pos)));
   return {
     map,
@@ -368,10 +386,16 @@ function supplyCtx(g, side) {
   };
 }
 
+function damageView(g) {
+  const d = g.damage || newDamage();
+  return { roads: Object.keys(d.roads), rails: Object.keys(d.rails), fort: Object.keys(d.fort).map((k) => ({ hex: k, level: fortLevel(d, k.split(',').map(Number)), base: fortBase(k.split(',').map(Number)) })) };
+}
+
 function resolveAirPhase(g, orders) {
-  const map = gameMap();
+  g.damage ||= newDamage();
+  const map = mapFor(g);
   const ctx = {
-    d6: () => d6(g), log: (side, text) => log(g, side, text), map, units: g.units, weapons: WEAPONS,
+    d6: () => d6(g), log: (side, text) => log(g, side, text), map, damage: g.damage, units: g.units, weapons: WEAPONS,
     turn: g.turn, opStage: g.opStage, firstTurn: scenarioOf(g).firstTurn, holder: g.initiative.holder,
     weatherAt: (hex) => weatherAt(g, hex),
     drawAmmo: (u, n) => draw(g.supply, supplyCtx(g, u.side), u, 'ammo', n),
@@ -473,7 +497,7 @@ function zocReaches(g, u, target) {
   const e = gameMap().hexsides[edgeKey(u.pos, target)];
   if (e && (e.type === 'escarpment' || e.type === 'majorRiver')) return false; // [10.21b]
   if (gameMap().tiles[key(...target)]?.t === 'sea') return false;
-  return !!stepCost(gameMap(), u.pos, target, { motorised: isMotorised(u) }); // [10.21c]
+  return !!stepCost(mapFor(g), u.pos, target, { motorised: isMotorised(u) }); // [10.21c]
 }
 
 // Is `pos` controlled by an enemy of `unit`'s side, for movement purposes? [10.26]
@@ -522,7 +546,7 @@ export function act(g, side, a) {
 // Validates a path and returns { cp, bp, hexes, stopAt } or an error string.
 export function planMove(g, u, path, { reaction = false } = {}) {
   if (!Array.isArray(path) || !path.length) return 'Empty path.';
-  const map = gameMap();
+  const map = mapFor(g);
   let cp = 0, bp = 0, sandCp = 0;
   const startInZoc = inEnemyZoc(g, u, u.pos);
   if (!reaction && (startInZoc || u.contact)) cp += u.engaged ? CP.disengage : CP.breakContact; // [8.15, 8.24]; reaction pays none [8.52]
@@ -672,7 +696,7 @@ function captureBroken(g, u) {
   for (const b of g.broken.filter((x) => x.side !== u.side)) {
     if (distance(b.pos, u.pos) !== 1) continue;
     if (g.units.some((x) => x.side === b.side && x.pos[0] === b.pos[0] && x.pos[1] === b.pos[1])) continue; // stacked with friends [21.53]
-    if (!stepCost(gameMap(), u.pos, b.pos, { motorised: u.motorised })) continue; // adjacent through passable terrain [21.54]
+    if (!stepCost(mapFor(g), u.pos, b.pos, { motorised: u.motorised })) continue; // adjacent through passable terrain [21.54]
     log(g, 'all', `${u.name} captures ${b.n} broken-down ${b.w} at ${key(...b.pos)}.`);
     b.side = u.side;
   }
@@ -897,7 +921,7 @@ function actDefend(g, side, a = {}) {
   const atk = d.attack;
   const attackers = atk.attackerIds.map((id) => g.units.find((x) => x.id === id)).filter((u) => u && u.str > 0);
   const phasing = attackers[0]?.side;
-  const map = gameMap();
+  const map = mapFor(g);
   g.seg.paid ||= {};
   // A phasing unit pays combat CP at most once per segment (5), a defender at most 3 [11.24].
   const spend = (u, cp) => {
@@ -1046,6 +1070,7 @@ function buildView(g, side) {
     units: [...ownView, ...enemy],
     supply,
     air: airView(g, side, seen),
+    damage: damageView(g),
     lastAir: g.lastAir ? {
       n: g.lastAir.n, turn: g.lastAir.turn, stage: g.lastAir.stage,
       // The enemy's bases stay hidden; their flights show only where they went and what happened.

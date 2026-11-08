@@ -407,3 +407,76 @@ test('air supply costs follow the abstract rules [47.22, 47.23]', () => {
   assert.equal(g.air.stock.cw.fuel, 250 - fuel);
   assert.equal(g.air.stock.cw.ammo, 200 - ammo);
 });
+
+async function bombRun(g, kind, hexKey, extra = {}) {
+  const a = await import('../src/server/air.js');
+  const { mapFor } = await import('../src/server/engine.js');
+  const { nameOfHex } = await import('../src/shared/hexnames.js');
+  const sq = g.air.squadrons.find((s) => s.side === 'cw' && s.kind === 'bomber' && s.planes.length >= 8);
+  sq.facility = 'matruh';
+  for (const s of g.air.squadrons) for (const p of s.planes) { p.ready = p.fueled = p.armed = false; }
+  for (const p of sq.planes.slice(0, 8)) { p.ready = p.fueled = p.armed = true; }
+  const lines = [];
+  const ctx = {
+    map: mapFor(g), damage: g.damage, units: g.units, weapons: {}, d6: () => 6, log: (s, t) => lines.push(t),
+    supplyUnitsAt: (h, side) => g.supply.units.filter((x) => x.side === side && x.pos[0] === h[0] && x.pos[1] === h[1]),
+    supplyAt: () => false, weatherAt: () => 'normal', turn: 3, opStage: 1, firstTurn: 1, holder: 'cw', ...extra,
+  };
+  const [c, r] = hexKey.split(',').map(Number);
+  a.resolveAir(g, { cw: { missions: [{ sq: sq.id, kind, hex: nameOfHex(c, r) }] }, axis: {} }, ctx);
+  return lines.join('\n');
+}
+
+test('bombing a road destroys it for movement until a unit rebuilds it', async () => {
+  const { mapFor, gameMap } = await import('../src/server/engine.js');
+  const { repairDamage } = await import('../src/server/air.js');
+  const { stepCost } = await import('../src/shared/rules.js');
+  const { facilityHex } = await import('../src/shared/air.js');
+  const { distance } = await import('../src/shared/hex.js');
+  const g = createGame({ seed: 4, air: 'on' });
+  const base = facilityHex(g.air.facilities.find((f) => f.id === 'matruh'));
+  const edge = [...gameMap().roads].map((e) => e.split('|')).map(([a, b]) => ({ a, b, d: distance(base, a.split(',').map(Number)) })).sort((x, y) => x.d - y.d)[0];
+  const A = edge.a.split(',').map(Number), B = edge.b.split(',').map(Number);
+  assert.equal(stepCost(mapFor(g), A, B, { motorised: true }).via, 'road');
+  const text = await bombRun(g, 'bRD', edge.a);
+  assert.match(text, /road in that hex is destroyed/);
+  assert.notEqual(stepCost(mapFor(g), A, B, { motorised: true })?.via, 'road');
+  assert.ok(viewFor(g, 'axis').damage.roads.includes(edge.a));
+  assert.equal(gameMap().roads.has(edge.a + '|' + edge.b) || gameMap().roads.has(edge.b + '|' + edge.a), true, 'the shared map is untouched');
+  const u = g.units.find((x) => x.side === 'axis' && x.type !== 'hq' && x.str > 0);
+  u.pos = A;
+  repairDamage(g);
+  assert.equal(stepCost(mapFor(g), A, B, { motorised: true }).via, 'road');
+});
+
+test('bombing a major city lowers its fortification one level per Operations Stage', async () => {
+  const { fortLevel } = await import('../src/server/air.js');
+  const { facilityHex } = await import('../src/shared/air.js');
+  const { distance } = await import('../src/shared/hex.js');
+  const { LOCATIONS } = await import('../src/shared/locations.js');
+  const { hexFromName } = await import('../src/shared/hexnames.js');
+  const g = createGame({ seed: 5, air: 'on' });
+  const base = facilityHex(g.air.facilities.find((f) => f.id === 'matruh'));
+  const city = LOCATIONS.filter((l) => l.city && !/cairo|alexandria/i.test(l.name)).map((l) => l.hexes[0])
+    .sort((a, b) => distance(base, a) - distance(base, b))[0];
+  assert.equal(fortLevel(g.damage, city), 2);
+  const k = `${city[0]},${city[1]}`;
+  assert.match(await bombRun(g, 'bFC', k), /reduced to Level 1/);
+  assert.equal(fortLevel(g.damage, city), 1);
+  assert.match(await bombRun(g, 'bFC', k), /only one fortification level/);
+  assert.equal(fortLevel(g.damage, city), 1);
+  assert.equal(viewFor(g, 'cw').damage.fort[0].level, 1);
+});
+
+test('bombing trucks cuts the Motorization Points of enemy supply units', async () => {
+  const { gameMap } = await import('../src/server/engine.js');
+  const { facilityHex } = await import('../src/shared/air.js');
+  const { distance } = await import('../src/shared/hex.js');
+  const g = createGame({ seed: 6, air: 'on' });
+  const base = facilityHex(g.air.facilities.find((f) => f.id === 'matruh'));
+  const dump = g.supply.units.filter((s) => s.side === 'axis' && gameMap().tiles[`${s.pos[0]},${s.pos[1]}`].t !== 'majorcity').sort((a, b) => distance(base, a.pos) - distance(base, b.pos))[0];
+  assert.ok(dump, 'an Axis dump in range');
+  const text = await bombRun(g, 'bTC', `${dump.pos[0]},${dump.pos[1]}`);
+  assert.match(text, /Truck Points? destroyed/);
+  assert.ok(dump.mp < 30);
+});

@@ -446,7 +446,11 @@ function airForm() {
       <select data-am="kind" data-sq="${q.id}"><option value="">Stay on the ground</option>
         ${q.kind === 'bomber' ? `<option value="bCU" ${m.kind === 'bCU' ? 'selected' : ''}>Bomb troops in…</option>
         <option value="bSD" ${m.kind === 'bSD' ? 'selected' : ''}>Bomb a supply dump in…</option>
-        <option value="bAF" ${m.kind === 'bAF' ? 'selected' : ''}>Bomb an air facility in…</option>` : `<option value="scramble" ${m.kind === 'scramble' ? 'selected' : ''}>Scramble against raiders</option>
+        <option value="bAF" ${m.kind === 'bAF' ? 'selected' : ''}>Bomb an air facility in…</option>
+        <option value="bRD" ${m.kind === 'bRD' ? 'selected' : ''}>Bomb a road in…</option>
+        <option value="bRR" ${m.kind === 'bRR' ? 'selected' : ''}>Bomb a railway in…</option>
+        <option value="bFC" ${m.kind === 'bFC' ? 'selected' : ''}>Bomb a city's fortifications in…</option>
+        <option value="bTC" ${m.kind === 'bTC' ? 'selected' : ''}>Bomb trucks in…</option>` : `<option value="scramble" ${m.kind === 'scramble' ? 'selected' : ''}>Scramble against raiders</option>
         <option value="capO" ${m.kind === 'capO' ? 'selected' : ''}>Offensive patrol over…</option>
         <option value="capD" ${m.kind === 'capD' ? 'selected' : ''}>Defensive patrol over…</option>
         <option value="strafe" ${m.kind === 'strafe' ? 'selected' : ''}>Strafe enemy troops in…</option>`}</select>
@@ -550,7 +554,7 @@ function renderSupply() {
 // ---------- Air tab (Air Game, stage 1: forces and bases) ----------
 let airSeen = null; // number of the last air phase the map has shown
 let airAnim = null;
-const AIR_VERB = { capO: 'offensive patrol', capD: 'defensive patrol', strafe: 'strafing', bCU: 'bombing troops', bSD: 'bombing a supply dump', bAF: 'bombing an air facility' };
+const AIR_VERB = { capO: 'offensive patrol', capD: 'defensive patrol', strafe: 'strafing', bCU: 'bombing troops', bSD: 'bombing a supply dump', bAF: 'bombing an air facility', bRD: 'bombing a road', bRR: 'bombing a railway', bFC: 'bombing fortifications', bTC: 'bombing trucks' };
 function startAirAnim() {
   airAnim = { start: performance.now(), dur: 3600 };
   const tick = () => {
@@ -881,7 +885,23 @@ function drawMap() {
 }
 
 // Flight paths from the last Land Support Air Phase, plus the missions being planned now.
+function drawDamage() {
+  const dm = S.game.damage; if (!dm) return;
+  const s = view.size;
+  const cross = (k, col) => {
+    const [c, r] = k.split(',').map(Number), p = centre(c, r);
+    ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.beginPath();
+    ctx.moveTo(p.x - s * 0.3, p.y - s * 0.3); ctx.lineTo(p.x + s * 0.3, p.y + s * 0.3);
+    ctx.moveTo(p.x + s * 0.3, p.y - s * 0.3); ctx.lineTo(p.x - s * 0.3, p.y + s * 0.3); ctx.stroke();
+  };
+  for (const k of dm.roads) cross(k, '#c11');
+  for (const k of dm.rails) cross(k, '#2f7fbf');
+  ctx.font = `bold ${Math.max(8, s * 0.32)}px sans-serif`; ctx.textAlign = 'center';
+  for (const f of dm.fort) { const [c, r] = f.hex.split(',').map(Number), p = centre(c, r); ctx.fillStyle = '#c11'; ctx.fillText(`F${f.level}/${f.base}`, p.x, p.y + s * 0.75); }
+}
+
 function drawAirOverlay() {
+  drawDamage();
   const s = view.size;
   const t = airAnim ? Math.min(1, (performance.now() - airAnim.start) / (airAnim.dur * 0.7)) : 1;
   const colour = (f) => (f.failed ? '#777' : f.side === 'axis' ? '#4a4a2a' : '#8a4b16');
