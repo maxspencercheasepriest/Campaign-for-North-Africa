@@ -854,7 +854,7 @@ function showHexInfo([c, r]) {
   $('hexInfo').innerHTML = [
     `<b>${nameOfHex(c, r)}</b> ${esc(terr.label)} <span class="muted">(CP ${terr.np === Infinity ? 'P' : terr.np}/${terr.mp === Infinity ? 'P' : terr.mp}, stack ${terr.stack})</span>`,
     port ? `${esc(port.name)} (${sideName(S.game.portOwners[port.id])}${port.port ? ', port' : ''}${port.city ? ', major city' : ''}${port.victory ? ', victory location' : ''})` : '',
-    ...us.map((u) => `${esc(u.name)} · ${u.str} steps${u.side === mySide() ? ` · CP ${fmtCP(u.cpUsed)}/${u.cpa} · coh ${u.cohesion}` : ''}`),
+    ...us.map((u) => `${esc(u.name)} · ${u.str}/${u.maxStr} TOE points${u.side === mySide() ? ` · CP ${fmtCP(u.cpUsed)}/${u.cpa} · coh ${u.cohesion}` : ''}`),
     ...sup.map((x) => x.own ? `Supply unit: ammo ${Math.floor(x.ammo)}, fuel ${Math.floor(x.fuel)}` : 'Enemy supply unit'),
     reach ? `Move here: ${fmtCP(reach.cost)} CP${reach.stop ? ' · enters enemy ZOC (must stop)' : ''}` : '',
   ].filter(Boolean).join('<br>');
