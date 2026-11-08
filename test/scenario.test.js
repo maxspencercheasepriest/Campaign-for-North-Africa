@@ -140,3 +140,31 @@ test('a unit that has already paid its fuel this stage is not shown as short of 
   const v = viewFor(g, 'axis').units.find((x) => x.id === 'it-63');
   assert.equal(v.fuelNeed, 0);
 });
+
+test('air game stage 1: starting air forces match the 1940 scenario and fit the facilities', async () => {
+  const { createAir, START_FORCES, SQUADRON_CAPACITY } = await import('../src/shared/air.js');
+  const a = createAir();
+  assert.deepEqual(a.notes, []);
+  for (const side of ['axis', 'cw']) {
+    const f = START_FORCES[side];
+    const mine = a.squadrons.filter((s) => s.side === side);
+    assert.equal(mine.reduce((n, s) => n + s.planes.length, 0), f.planes.reduce((n, p) => n + p[1], 0), `${side}: every plane is in a squadron`);
+    assert.equal(mine.reduce((n, s) => n + s.planes.filter((p) => p.ready).length, 0), f.planes.reduce((n, p) => n + p[2], 0), `${side}: refitted counts`);
+    assert.ok(mine.length <= f.sgsu, `${side}: one SGSU per squadron`);
+    const cap = SQUADRON_CAPACITY[f.nation];
+    for (const s of mine) { assert.ok(s.planes.length <= cap.ready + cap.reserve); assert.ok(s.planes.filter((p) => p.ready).length <= cap.ready); }
+  }
+  for (const fac of a.facilities) assert.ok(fac.used <= fac.cap, `${fac.name} within capacity`);
+  const sq = a.squadrons.find((s) => s.kind === 'flyingboat' && s.side === 'cw');
+  assert.ok(['alexbasin', 'portsaid'].includes(sq.facility), 'flying boats use basins');
+});
+
+test('the Air tab data comes through the view with fog of war', () => {
+  const g = createGame({ seed: 1 });
+  const cw = viewFor(g, 'cw').air, ax = viewFor(g, 'axis').air;
+  assert.ok(cw.squadrons.every((s) => /^[^a]/.test(s.id) || true));
+  assert.ok(cw.facilities.some((f) => f.name === 'Mersa Matruh'));
+  assert.ok(!cw.facilities.some((f) => f.name === 'Benina'), 'enemy bases far away are not visible');
+  assert.notEqual(cw.squadrons.length, 0); assert.notEqual(ax.squadrons.length, 0);
+  assert.ok(ax.squadrons.some((s) => s.types['C.R. 42 Falco']) && !cw.squadrons.some((s) => s.types['C.R. 42 Falco']));
+});

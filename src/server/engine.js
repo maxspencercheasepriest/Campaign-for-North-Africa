@@ -13,6 +13,7 @@
 // STILL PLACEHOLDER: supply/air/convoys (32 / 33-58), truck breakdown, facility repair, and more.
 
 import { REINFORCEMENTS } from '../shared/reinforcements.js';
+import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
 import {
   SIDES, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
@@ -62,6 +63,7 @@ export function createGame(options = {}) {
     options: { pastaRule: true, ...options },
     units: initialUnits(),
     supply: createSupply(initialSupply(options.stock === 'generous' ? 2 : 1)),
+    air: createAir(),
     portOwners: initialPortOwners(),
     pending: { axis: null, cw: null },
     ready: { axis: false, cw: false },
@@ -942,6 +944,17 @@ function cachedSupplyReach(g, sctx, side, x) {
   return m.by.get(k);
 }
 
+// Air Game stage 1: your own squadrons and every air facility you can see (your own, or enemy ones within sight).
+function airView(g, side, seen) {
+  g.air ||= createAir(); // saves from before the Air Game
+  const fac = (f) => ({ id: f.id, name: f.name, kind: f.kind, owner: f.owner, cap: f.cap, used: f.used, hex: f.hex, off: !!f.off, own: f.owner === side });
+  return {
+    facilities: g.air.facilities.filter((f) => f.owner === side || (f.hex && seen(facilityHex(f)))).map(fac),
+    squadrons: g.air.squadrons.filter((s) => s.side === side).map(summariseSquadron),
+    pilots: g.air.pilots[side], sgsu: g.air.sgsu[side],
+  };
+}
+
 export function viewFor(g, side) {
   const own = g.units.filter((u) => u.side === side);
   const seen = (pos) => own.some((u) => distance(u.pos, pos) <= VISION_RANGE);
@@ -986,6 +999,7 @@ export function viewFor(g, side) {
     acting: actingSides(g),
     units: [...ownView, ...enemy],
     supply,
+    air: airView(g, side, seen),
     box: side === 'axis' ? g.supply.box.axis.length : 0,
     plan: g.supply.plan.filter((p) => p.side === side).map(({ turn, n }) => ({ turn, n })),
     atSea: side === 'axis' ? (g.supply.convoys || []).map((c) => ({ turn: c.turn, stage: c.stage, port: c.port, route: c.route, n: c.units.length })) : [],

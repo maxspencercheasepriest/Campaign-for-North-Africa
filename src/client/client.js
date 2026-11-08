@@ -3,6 +3,7 @@ import {
   MAP_COLS, MAP_ROWS, SCENARIOS, SIDES, SIDE_NAMES, ROLES, ROLE_NAMES, PORTS, LOCATIONS, VISION_RANGE, buildMap,
 } from '/shared/scenario.js';
 import { hexFromName, nameOfHex } from '/shared/hexnames.js';
+import { FACILITY_NAMES as AIR_FACILITY_NAMES } from '/shared/air.js';
 import { TERRAIN, HEXSIDES, STACKING_POINTS, NON_MOTORISED_VOLUNTARY_LIMIT, CP, stepCost, edgeKey, localWeather } from '/shared/rules.js';
 
 import { BASICS, stepHelp } from './tutorial.js';
@@ -102,6 +103,7 @@ function render() {
   if (selected && !myUnits().some((u) => u.id === selected)) selected = null;
   renderOrders();
   renderSupply();
+  renderAir();
   $('tab-staff').innerHTML = '';
   $('tab-staff').appendChild(seatGrid());
   renderLog();
@@ -499,6 +501,24 @@ function renderSupply() {
     <p>Prisoners held: <b>${g.prisoners?.[mySide()] ?? 0}</b> TOE points.</p>
     ${victoryHtml(v)}
     <p class="help">Units draw Fuel (once per Operations Stage) and Ammunition (at combat) from supply units within half their CPA [32.2]. Spending past the allowance costs cohesion. A stage spent resting restores up to 5 cohesion (never above 0). At −26 a unit can't move or fight.</p>`;
+}
+
+// ---------- Air tab (Air Game, stage 1: forces and bases) ----------
+const KIND_LABEL = { fighter: 'Fighters', bomber: 'Bombers', recon: 'Recon', transport: 'Transports', flyingboat: 'Flying boats' };
+function renderAir() {
+  const el = $('tab-air');
+  if (!mySide() || !S.game?.air) { el.innerHTML = ''; return; }
+  const a = S.game.air;
+  const fname = (id) => a.facilities.find((f) => f.id === id)?.name || id;
+  const planes = a.squadrons.reduce((n, s) => n + s.total, 0), ready = a.squadrons.reduce((n, s) => n + s.ready, 0);
+  const pilots = Object.entries(a.pilots).filter(([, n]) => n).sort((x, y) => y[0] - x[0]).map(([r, n]) => `${n}×${r}`).join(', ');
+  el.innerHTML = `<h3>Air forces</h3>
+    <p><b>${planes}</b> aircraft in <b>${a.squadrons.length}</b> squadrons (<b>${ready}</b> ready to fly). Rated pilots: ${pilots || 'none'} (others fly as zero-rated). Squadron Ground Support Units available: ${a.sgsu}.</p>
+    <table class="grid"><tr><th>Squadron</th><th>Role</th><th>Based at</th><th>Planes</th><th>Ready</th><th>Pilots</th></tr>
+    ${a.squadrons.map((s) => `<tr><td>${esc(s.name)}</td><td>${KIND_LABEL[s.kind] || s.kind}</td><td>${esc(fname(s.facility))}</td><td>${s.total}</td><td>${s.ready}</td><td>${s.pilots.length ? s.pilots.join(', ') : '–'}</td></tr>`).join('')}</table>
+    <h3>Air facilities</h3><table class="grid"><tr><th>Facility</th><th>Type</th><th>Squadrons</th><th>Hex</th></tr>
+    ${a.facilities.map((f) => `<tr class="${f.own ? '' : 'warn'}"><td>${esc(f.name)}${f.own ? '' : ' (enemy)'}</td><td>${esc(AIR_FACILITY_NAMES[f.kind])}</td><td>${f.own ? `${f.used}/${f.cap}` : '–'}</td><td>${f.off ? 'off-map' : esc(f.hex)}</td></tr>`).join('')}</table>
+    <p class="help">Air Game, stage 1: your air forces and bases as the 1940 scenario sets them out [60.32, 60.42, 60.5]. Squadrons are 12 Italian planes (9 ready, 3 in reserve) or 20 Commonwealth planes (15 + 5) [35.23]. Flying missions, air combat and bombing are not built yet.</p>`;
 }
 
 // ---------- Lobby / staff ----------
