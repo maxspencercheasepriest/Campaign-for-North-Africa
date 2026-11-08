@@ -256,13 +256,13 @@ function renderOrders() {
   } else if (!S.canAct) {
     head += `<p class="note">${esc(S.actingFor || 'Nobody')} (${esc(ROLE_NAMES[st.role])} or stand-in) is acting for ${sideName(mySide())}. Advise them in staff chat.</p>`;
   }
-  const body = ({ convoy: convoyForm, declare: declareForm, movecombat: moveCombatPanel, trucks: trucksForm })[g.step]();
+  const body = ({ convoy: convoyForm, declare: declareForm, air: airForm, movecombat: moveCombatPanel, trucks: trucksForm })[g.step]();
   el.innerHTML = head + body;
   if (!S.canAct) for (const input of el.querySelectorAll('input, select, button')) input.disabled = true;
-  if (S.canAct && ['convoy', 'trucks'].includes(g.step)) {
+  if (S.canAct && ['convoy', 'trucks', 'air'].includes(g.step)) {
     const btn = document.createElement('button');
     btn.className = 'primary';
-    btn.textContent = g.step === 'trucks' ? 'Move supply units and finish' : 'Submit orders';
+    btn.textContent = g.step === 'trucks' ? 'Move supply units and finish' : g.step === 'air' ? 'Fly these missions' : 'Submit orders';
     btn.onclick = () => send({ type: 'submit', orders: draft });
     el.appendChild(btn);
   }
@@ -427,6 +427,26 @@ function obligationList() {
   }).join('')}</ul>`;
 }
 
+function airForm() {
+  draft.missions ||= [];
+  const sqs = (S.game.air?.squadrons || []).filter((q) => q.kind === 'fighter');
+  const cur = (id) => draft.missions.find((m) => m.sq === id) || { kind: '', hex: '' };
+  const rows = sqs.map((q) => {
+    const m = cur(q.id);
+    return `<li><b>${esc(q.name)}</b> <span class="muted">at ${esc(q.facility)}: ${q.fueled} fuelled, ${q.armed} armed of ${q.ready} ready</span><br>
+      <select data-am="kind" data-sq="${q.id}"><option value="">Stay on the ground</option>
+        <option value="scramble" ${m.kind === 'scramble' ? 'selected' : ''}>Scramble against raiders</option>
+        <option value="capO" ${m.kind === 'capO' ? 'selected' : ''}>Offensive patrol over…</option>
+        <option value="capD" ${m.kind === 'capD' ? 'selected' : ''}>Defensive patrol over…</option>
+        <option value="strafe" ${m.kind === 'strafe' ? 'selected' : ''}>Strafe enemy troops in…</option></select>
+      <input data-am="hex" data-sq="${q.id}" size="6" placeholder="C4807" value="${esc(m.hex || '')}"></li>`;
+  }).join('');
+  const st = S.game.air?.stock;
+  return `<p class="help">Fighters fly, fight and strafe this phase. A squadron needs refitted, fuelled planes within range; armed planes hit hard, unarmed ones do not. Planes that fly must be refitted, fuelled and armed again. Bombing missions are not in the game yet.</p>
+    ${st ? `<p class="muted">Air stocks: ${st.ammo} Ammo, ${st.fuel} Fuel, ${st.stores} Stores.</p>` : ''}
+    <ul class="orders">${rows || '<li class="muted">You have no fighter squadrons.</li>'}</ul>`;
+}
+
 function trucksForm() {
   draft.moves ||= [];
   const mine = (S.game.supply || []).filter((x) => x.own);
@@ -437,6 +457,13 @@ function trucksForm() {
 }
 
 function wireOrders(el) {
+  el.querySelectorAll('[data-am]').forEach((i) => (i.onchange = () => {
+    draft.missions ||= [];
+    let m = draft.missions.find((x) => x.sq === i.dataset.sq);
+    if (!m) { m = { sq: i.dataset.sq, kind: '', hex: '' }; draft.missions.push(m); }
+    m[i.dataset.am] = i.value.trim();
+    draft.missions = draft.missions.filter((x) => x.kind);
+  }));
   el.querySelectorAll('[data-cv]').forEach((i) => (i.onchange = () => {
     const k = i.dataset.cv, c = draft.convoys[+i.dataset.i];
     c[k] = k === 'port' ? i.value : Math.max(0, parseInt(i.value, 10) || 0);
@@ -564,7 +591,7 @@ const scenSel = $('optScenario');
 scenSel.innerHTML = Object.values(SCENARIOS).map((sc) => `<option value="${sc.id}">${esc(sc.name)} (GT 1-${sc.lastTurn})</option>`).join('');
 const showBlurb = () => { const sc = SCENARIOS[scenSel.value]; $('scenarioBlurb').textContent = `${sc.blurb} Estimated play: ${sc.hours}.`; };
 scenSel.onchange = showBlurb; showBlurb();
-$('startBtn').onclick = () => send({ type: 'start', options: { scenario: scenSel.value, reinforce: $('optReinforce').value, stock: $('optStock').value } });
+$('startBtn').onclick = () => send({ type: 'start', options: { scenario: scenSel.value, reinforce: $('optReinforce').value, stock: $('optStock').value, air: $('optAir').value } });
 
 // ---------- Tabs ----------
 

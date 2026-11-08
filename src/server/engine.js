@@ -15,6 +15,7 @@
 import { REINFORCEMENTS } from '../shared/reinforcements.js';
 import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
+import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots } from './air.js';
 import {
   SIDES, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
   buildMap, initialUnits, initialSupply, initialPortOwners, VISION_RANGE,
@@ -43,6 +44,7 @@ export const STEPS = {
   convoy: { name: 'Naval Convoy Stage', role: 'logistics', kind: 'simultaneous' },
   declare: { name: 'Initiative Declaration', role: 'cic', kind: 'holder' },
   movecombat: { name: 'Movement & Combat Phase', role: 'front', kind: 'phasing' },
+  air: { name: 'Land Support Air Phase', role: 'air', kind: 'simultaneous' },
   trucks: { name: 'Truck Convoy Movement Phase', role: 'rear', kind: 'phasing' },
 };
 
@@ -78,6 +80,7 @@ export function createGame(options = {}) {
     seed: Number.isInteger(options.seed) ? options.seed >>> 0 : (Date.now() ^ 0x9e3779b9) >>> 0,
   };
   if (options.stock === 'generous') doubleStock(g.supply, gameMap());
+  for (const sd of SIDES) fuelAndArm(g.air, sd);
   startGameTurn(g);
   return g;
 }
@@ -139,6 +142,7 @@ function startGameTurn(g) {
   g.opStage = 0;
   g.order = null;
   g.half = null;
+  returnPilots(g.air, g.turn);
   setStep(g, 'convoy');
 }
 
@@ -182,7 +186,8 @@ function beginHalf(g, half) {
 function advance(g) {
   switch (g.step) {
     case 'convoy': startOpStage(g, 1); break;
-    case 'declare': beginHalf(g, 'A'); break;
+    case 'declare': if (g.options.air === 'on') setStep(g, 'air'); else beginHalf(g, 'A'); break;
+    case 'air': beginHalf(g, 'A'); break;
     case 'movecombat': setStep(g, 'trucks'); repairPhase(g, phasingSide(g)); break;
     case 'trucks':
       if (g.half === 'A') beginHalf(g, 'B');
@@ -293,7 +298,8 @@ export function submitOrders(g, side, orders) {
     g.pending[side] = orders;
     g.ready[side] = true;
     if (SIDES.every((s) => g.ready[s])) {
-      resolveConvoy(g, { axis: g.pending.axis, cw: g.pending.cw });
+      if (g.step === 'air') resolveAirPhase(g, { axis: g.pending.axis, cw: g.pending.cw });
+      else resolveConvoy(g, { axis: g.pending.axis, cw: g.pending.cw });
       advance(g);
     }
     return null;
@@ -340,6 +346,8 @@ function validateOrders(g, side, step, o) {
       if (total > g.supply.box.axis.length) return `Only ${g.supply.box.axis.length} supply units are waiting in Tripoli.`;
       return null;
     }
+    case 'air':
+      return validateAirOrders(g, side, o, gameMap());
     case 'trucks':
       return Array.isArray(o.moves || []) ? null : 'Moves must be a list.';
     default:
@@ -357,6 +365,17 @@ function supplyCtx(g, side) {
     weatherAt: (hex) => weatherAt(g, hex),
     zocBlocked: (sd, hex) => inEnemyZoc(g, { side: sd }, hex),
   };
+}
+
+function resolveAirPhase(g, orders) {
+  const map = gameMap();
+  const ctx = {
+    d6: () => d6(g), log: (side, text) => log(g, side, text), map, units: g.units, weapons: WEAPONS,
+    turn: g.turn, opStage: g.opStage, firstTurn: scenarioOf(g).firstTurn, holder: g.initiative.holder,
+    weatherAt: (hex) => weatherAt(g, hex),
+    supplyAt: (hex, side) => g.supply.units.some((x) => x.side === side && x.pos[0] === hex[0] && x.pos[1] === hex[1]),
+  };
+  resolveAir(g, orders, ctx);
 }
 
 function resolveConvoy(g, o) {
@@ -403,6 +422,7 @@ function resolveTrucks(g, side, o) {
 
 // What an unseated side does by itself: the Axis sends a full convoy to its best port.
 export function autoOrders(g, side) {
+  if (g.step === 'air') return autoAirOrders(g, side);
   if (g.step === 'convoy' && side === 'axis' && g.supply.box.axis.length) {
     const ports = PORTS.filter((p) => g.portOwners[p.id] === 'axis').sort((a, b) => b.capacity - a.capacity);
     if (ports.length) return { convoys: [{ port: ports[0].id, route: g.turn <= 2 ? 2 : 3, n: Math.min(MAX_PER_CONVOY_LANE, g.supply.box.axis.length), stage: 1 }] };
@@ -951,7 +971,7 @@ function airView(g, side, seen) {
   return {
     facilities: g.air.facilities.filter((f) => f.owner === side || (f.hex && seen(facilityHex(f)))).map(fac),
     squadrons: g.air.squadrons.filter((s) => s.side === side).map(summariseSquadron),
-    pilots: g.air.pilots[side], sgsu: g.air.sgsu[side],
+    pilots: g.air.pilots[side], sgsu: g.air.sgsu[side], stock: g.air.stock?.[side] || null,
   };
 }
 

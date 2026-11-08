@@ -168,3 +168,56 @@ test('the Air tab data comes through the view with fog of war', () => {
   assert.notEqual(cw.squadrons.length, 0); assert.notEqual(ax.squadrons.length, 0);
   assert.ok(ax.squadrons.some((s) => s.types['C.R. 42 Falco']) && !cw.squadrons.some((s) => s.types['C.R. 42 Falco']));
 });
+
+test('air game stage 2: tables', async () => {
+  const a = await import('../src/server/air.js');
+  assert.equal(a.scrambleNumber(2), 6);
+  assert.equal(a.scrambleNumber(9), 2);
+  assert.equal(a.scrambleNumber(16), 0);
+  assert.equal(a.maneuverAdjustment(0), 0);
+  assert.equal(a.maneuverAdjustment(5), 2);
+  assert.equal(a.maneuverAdjustment(30), 5);
+  assert.equal(a.killNumber(-13), 0);
+  assert.equal(a.killNumber(0), 14);
+  assert.equal(a.killNumber(4), 24);
+  assert.equal(a.killNumber(20), 56);
+  assert.equal(a.refitShare(1), 100);
+  assert.equal(a.refitShare(7), 40);
+  assert.equal(a.strafeColumn(5), 0);
+  assert.equal(a.strafeColumn(6), 1);
+  assert.equal(a.strafeColumn(50), 9);
+  assert.equal(a.strafeResult(0, 63), 0);
+  assert.equal(a.strafeResult(0, 64), 1);
+  assert.equal(a.strafeResult(8, 66), 3);
+  assert.equal(a.strafeResult(9, 45), 1);
+});
+
+test('air game stage 2: the Land Support Air Phase sits between Initiative and movement and fighters fight', () => {
+  const g = createGame({ seed: 7, air: 'on' });
+  assert.ok(g.air.squadrons.some((s) => s.planes.some((p) => p.fueled && p.armed)), 'ready planes start fuelled and armed');
+  const stock = g.air.stock.axis.fuel;
+  assert.ok(stock < 850, 'fuelling the starting planes used fuel');
+  submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
+  assert.equal(g.step, 'declare');
+  submitOrders(g, g.initiative.holder, { goFirst: true });
+  assert.equal(g.step, 'air');
+  // Put an Axis and a Commonwealth fighter squadron over the same hex.
+  const axSq = g.air.squadrons.find((s) => s.side === 'axis' && s.kind === 'fighter' && s.planes.some((p) => p.ready && p.fueled));
+  const cwSq = g.air.squadrons.find((s) => s.side === 'cw' && s.kind === 'fighter' && s.planes.some((p) => p.ready && p.fueled));
+  const bad = submitOrders(g, 'axis', { missions: [{ sq: cwSq.id, kind: 'capO', hex: 'C4807' }] });
+  assert.match(bad, /own squadrons/);
+  assert.equal(submitOrders(g, 'axis', { missions: [{ sq: axSq.id, kind: 'capD', hex: 'C4020' }] }), null);
+  const before = g.air.squadrons.reduce((n, s) => n + s.planes.length, 0);
+  assert.equal(submitOrders(g, 'cw', { missions: [{ sq: cwSq.id, kind: 'capO', hex: 'C4020' }] }), null);
+  assert.equal(g.step, 'movecombat', 'the air phase is over');
+  assert.ok(g.log.some((l) => /Air combat/.test(l.text)) || g.log.some((l) => /could not fly/.test(l.text)), 'something happened in the air');
+  const flown = [...axSq.planes, ...cwSq.planes].filter((p) => !p.ready);
+  assert.ok(flown.length > 0 || before > g.air.squadrons.reduce((n, s) => n + s.planes.length, 0), 'planes that flew are no longer refitted (or were shot down)');
+});
+
+test('air game stage 2: option off keeps the old sequence', () => {
+  const g = createGame({ seed: 7 });
+  submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
+  submitOrders(g, g.initiative.holder, { goFirst: true });
+  assert.equal(g.step, 'movecombat');
+});

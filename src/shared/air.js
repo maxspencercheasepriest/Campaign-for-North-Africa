@@ -140,6 +140,9 @@ const PLACEMENT = {
   cw: { fighter: ['matruh', 'amiriya', 'dekheila', 'alex1', 'alex2'], bomber: ['alex1', 'alex2', 'amiriya', 'dekheila', 'aboukir', 'almaza', 'abbassia', 'cwoff-deversoir', 'cwoff-fayid', 'cwoff-kabrit'], recon: ['matruh', 'amiriya', 'alex2'], transport: ['almaza', 'abbassia'], flyingboat: ['alexbasin', 'portsaid'] },
 };
 
+// Starting air stocks of Ammo, Fuel and Stores [60.32, 60.42]. Kept as one pool per side for now (the book keeps them per facility).
+export const AIR_STOCK = { axis: { ammo: 1200, fuel: 850, stores: 100 }, cw: { ammo: 200, fuel: 250, stores: 50 } };
+
 // Build the starting air order of battle for both sides.
 export function createAir() {
   const facilities = FACILITIES.map((f) => ({ ...f, owner: f.side, cap: FACILITY_CAPACITY[f.kind], used: 0 }));
@@ -179,14 +182,14 @@ export function createAir() {
         if (!base) { notes.push(`${label}: no room for a squadron of ${types[0].type}`); continue; }
         base.used++;
         n++;
-        squadrons.push({ id: `${side}-sq${n}`, side, name: `${label} ${i + 1}`, kind, facility: base.id, planes: planes.map((p) => ({ type: p.type, ready: p.ready, pilot: AIRCRAFT[p.type].pilot ? 0 : null })) });
+        squadrons.push({ id: `${side}-sq${n}`, side, nation: f.nation, name: `${label} ${i + 1}`, kind, facility: base.id, planes: planes.map((p) => ({ type: p.type, ready: p.ready, fueled: false, armed: false, pilot: AIRCRAFT[p.type].pilot ? 0 : null })) });
       }
     };
     for (const g of rest) make([g], g.type);
     if (french.length) make(french, 'Free French');
   }
   assignPilots(squadrons);
-  return { facilities, squadrons, notes, pilots: { axis: START_FORCES.axis.pilots, cw: START_FORCES.cw.pilots }, sgsu: { axis: START_FORCES.axis.sgsu, cw: START_FORCES.cw.sgsu } };
+  return { facilities, squadrons, notes, returning: [], stock: { axis: { ...AIR_STOCK.axis }, cw: { ...AIR_STOCK.cw } }, pilots: { axis: START_FORCES.axis.pilots, cw: START_FORCES.cw.pilots }, sgsu: { axis: START_FORCES.axis.sgsu, cw: START_FORCES.cw.sgsu } };
 }
 
 // Rated pilots (3 best) go to fighters, spread across the fighter squadrons; the rest fly as zero-rated pilots [34.83].
@@ -210,5 +213,5 @@ function assignPilots(squadrons) {
 export function summariseSquadron(s) {
   const types = {};
   for (const p of s.planes) { types[p.type] = (types[p.type] || 0) + 1; }
-  return { id: s.id, name: s.name, kind: s.kind, facility: s.facility, total: s.planes.length, ready: s.planes.filter((p) => p.ready).length, types, pilots: s.planes.filter((p) => p.pilot > 0).map((p) => p.pilot) };
+  return { id: s.id, name: s.name, kind: s.kind, facility: s.facility, total: s.planes.length, ready: s.planes.filter((p) => p.ready).length, fueled: s.planes.filter((p) => p.ready && p.fueled).length, armed: s.planes.filter((p) => p.ready && p.armed).length, nation: s.nation, types, pilots: s.planes.filter((p) => p.pilot > 0).map((p) => p.pilot) };
 }
