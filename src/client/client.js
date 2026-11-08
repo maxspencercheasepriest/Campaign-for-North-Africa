@@ -3,7 +3,7 @@ import {
   MAP_COLS, MAP_ROWS, SCENARIOS, SIDES, SIDE_NAMES, ROLES, ROLE_NAMES, PORTS, LOCATIONS, VISION_RANGE, buildMap,
 } from '/shared/scenario.js';
 import { hexFromName, nameOfHex } from '/shared/hexnames.js';
-import { FACILITY_NAMES as AIR_FACILITY_NAMES } from '/shared/air.js';
+import { FACILITY_NAMES as AIR_FACILITY_NAMES, FACILITY_CAPACITY as AIR_FACILITY_CAP } from '/shared/air.js';
 import { TERRAIN, HEXSIDES, STACKING_POINTS, NON_MOTORISED_VOLUNTARY_LIMIT, CP, stepCost, edgeKey, localWeather } from '/shared/rules.js';
 
 import { BASICS, stepHelp } from './tutorial.js';
@@ -863,6 +863,20 @@ function drawMap() {
     const { x: px, y: py } = centre(...x.pos);
     ctx.fillStyle = x.side === 'axis' ? '#6b6b4a' : '#7a5a2e'; ctx.strokeStyle = x.id === selectedSupply ? '#d11' : '#111'; ctx.lineWidth = x.id === selectedSupply ? 2.5 : 1;
     ctx.fillRect(px + s * 0.3, py - s * 0.8, s * 0.38, s * 0.38); ctx.strokeRect(px + s * 0.3, py - s * 0.8, s * 0.38, s * 0.38);
+  }
+  // Air facilities: a plane on a disc in the owner's colours; a small number shows capacity left when it has been bombed
+  if (s >= 8) for (const f of S.game.air?.facilities || []) {
+    if (!f.hex) continue;
+    const h = hexFromName(f.hex); if (!h) continue;
+    const { x, y } = centre(...h), r = s * (f.kind === 'airfield' ? 0.3 : 0.24), cx = x - s * 0.45, cy = y - s * 0.42;
+    const col = SIDE_COLORS[f.owner]?.edge || '#333';
+    ctx.fillStyle = SIDE_COLORS[f.owner]?.fill || '#ccc'; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = col; ctx.save(); ctx.translate(cx, cy); ctx.rotate(-Math.PI / 4); const k = r / 10;
+    ctx.beginPath(); ctx.moveTo(8 * k, 0); ctx.lineTo(-6 * k, 6 * k); ctx.lineTo(-3 * k, 0); ctx.lineTo(-6 * k, -6 * k); ctx.closePath(); ctx.fill(); ctx.restore();
+    if (f.kind === 'basin' || f.kind === 'alighting') { ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(cx - r, cy + r * 1.3); ctx.lineTo(cx + r, cy + r * 1.3); ctx.stroke(); }
+    const max = AIR_FACILITY_CAP[f.kind];
+    if (f.cap < max) { ctx.fillStyle = '#c11'; ctx.font = `bold ${Math.max(7, s * 0.26)}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText(`${f.cap}/${max}`, cx, cy + r + s * 0.26); }
   }
   // Broken-down vehicles
   for (const b of S.game.broken || []) {
