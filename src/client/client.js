@@ -523,13 +523,14 @@ function obligationList() {
 
 function airForm() {
   draft.missions ||= [];
-  const sqs = (S.game.air?.squadrons || []).filter((q) => q.kind === 'fighter' || q.kind === 'bomber');
+  const sqs = S.game.air?.squadrons || [];
   const cur = (id) => draft.missions.find((m) => m.sq === id) || { kind: '', hex: '' };
   const rows = sqs.map((q) => {
     const m = cur(q.id);
     return `<li><b>${esc(q.name)}</b> <span class="muted">at ${esc(q.facility)}: ${q.fueled} fuelled, ${q.armed} armed of ${q.ready} ready</span><br>
       <select data-am="kind" data-sq="${q.id}"><option value="">Stay on the ground</option>
-        ${q.kind === 'bomber' ? `<option value="bCU" ${m.kind === 'bCU' ? 'selected' : ''}>Bomb troops in…</option>
+        ${(q.moveTo || []).length ? `<option value="transfer" ${m.kind === 'transfer' ? 'selected' : ''}>Transfer to another base…</option>` : ''}
+        ${q.kind !== 'bomber' && q.kind !== 'fighter' ? '' : q.kind === 'bomber' ? `<option value="bCU" ${m.kind === 'bCU' ? 'selected' : ''}>Bomb troops in…</option>
         <option value="bSD" ${m.kind === 'bSD' ? 'selected' : ''}>Bomb a supply dump in…</option>
         <option value="bAF" ${m.kind === 'bAF' ? 'selected' : ''}>Bomb an air facility in…</option>
         <option value="bRD" ${m.kind === 'bRD' ? 'selected' : ''}>Bomb a road in…</option>
@@ -541,12 +542,14 @@ function airForm() {
         <option value="capO" ${m.kind === 'capO' ? 'selected' : ''}>Offensive patrol over…</option>
         <option value="capD" ${m.kind === 'capD' ? 'selected' : ''}>Defensive patrol over…</option>
         <option value="strafe" ${m.kind === 'strafe' ? 'selected' : ''}>Strafe enemy troops in…</option>`}</select>
-      <input data-am="hex" data-sq="${q.id}" size="6" placeholder="C4807" value="${esc(m.hex || '')}"></li>`;
+      ${m.kind === 'transfer'
+        ? `<select data-am="to" data-sq="${q.id}">${(q.moveTo || []).map((f) => `<option value="${esc(f.id)}" ${m.to === f.id ? 'selected' : ''}>${esc(f.name)} (${esc(f.hex)}, ${f.d} hexes)</option>`).join('')}</select>`
+        : q.kind === 'fighter' || q.kind === 'bomber' ? `<input data-am="hex" data-sq="${q.id}" size="6" placeholder="C4807" value="${esc(m.hex || '')}">` : ''}</li>`;
   }).join('');
   const st = S.game.air?.stock;
-  return `<p class="help">Fighters fly, fight and strafe this phase. A squadron needs refitted, fuelled planes within range; armed planes hit hard, unarmed ones do not. Bombers need armed planes: tons delivered set the damage. Fighters over the target can shoot bombers down, so send an offensive patrol to the same hex. Planes that fly must be refitted, fuelled and armed again. Flak is not in the game yet.</p>
+  return `<p class="help">Fighters fly, fight and strafe this phase. A squadron needs refitted, fuelled planes within range; armed planes hit hard, unarmed ones do not. Bombers need armed planes: tons delivered set the damage. Fighters over the target can shoot bombers down, so send an offensive patrol to the same hex. Planes that fly must be refitted, fuelled and armed again. Any squadron can transfer to a friendly base with room within twice its planes' range (stand-in distance). Flak is not in the game yet.</p>
     ${st ? `<p class="muted">Air stocks: ${st.ammo} Ammo, ${st.fuel} Fuel, ${st.stores} Stores.</p>` : ''}
-    <ul class="orders">${rows || '<li class="muted">You have no fighter or bomber squadrons.</li>'}</ul>`;
+    <ul class="orders">${rows || '<li class="muted">You have no squadrons.</li>'}</ul>`;
 }
 
 function fleetForm() {
@@ -594,7 +597,12 @@ function wireOrders(el) {
     let m = draft.missions.find((x) => x.sq === i.dataset.sq);
     if (!m) { m = { sq: i.dataset.sq, kind: '', hex: '' }; draft.missions.push(m); }
     m[i.dataset.am] = i.value.trim();
+    if (i.dataset.am === 'kind' && m.kind === 'transfer') {
+      const q = (S.game.air?.squadrons || []).find((x) => x.id === m.sq);
+      m.to = q?.moveTo?.[0]?.id || '';
+    }
     draft.missions = draft.missions.filter((x) => x.kind);
+    if (i.dataset.am === 'kind') renderOrders();
   }));
   el.querySelectorAll('[data-cv]').forEach((i) => (i.onchange = () => {
     const k = i.dataset.cv, c = draft.convoys[+i.dataset.i];
@@ -1000,11 +1008,15 @@ function drawMap() {
     const h = hexFromName(f.hex); if (!h) continue;
     const { x, y } = centre(...h), r = s * (f.kind === 'airfield' ? 0.3 : 0.24), cx = x - s * 0.45, cy = y - s * 0.42;
     const col = SIDE_COLORS[f.owner]?.edge || '#333';
-    ctx.fillStyle = SIDE_COLORS[f.owner]?.fill || '#ccc'; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = col; ctx.save(); ctx.translate(cx, cy); ctx.rotate(-Math.PI / 4); const k = r / 10;
+    // Own bases show whether squadrons are based there: solid disc = occupied, pale dashed disc = empty. Enemy bases are not known.
+    const empty = f.used === 0;
+    ctx.fillStyle = empty ? '#f4f1e6' : (SIDE_COLORS[f.owner]?.fill || '#ccc'); ctx.strokeStyle = col; ctx.lineWidth = empty ? 1.2 : 1.5;
+    ctx.setLineDash(empty ? [2, 2] : []);
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = empty ? col + '88' : col; ctx.save(); ctx.translate(cx, cy); ctx.rotate(-Math.PI / 4); const k = r / 10;
     ctx.beginPath(); ctx.moveTo(8 * k, 0); ctx.lineTo(-6 * k, 6 * k); ctx.lineTo(-3 * k, 0); ctx.lineTo(-6 * k, -6 * k); ctx.closePath(); ctx.fill(); ctx.restore();
     if (f.kind === 'basin' || f.kind === 'alighting') { ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(cx - r, cy + r * 1.3); ctx.lineTo(cx + r, cy + r * 1.3); ctx.stroke(); }
+    if (f.used > 0 && r > 5) { ctx.fillStyle = col; ctx.font = `bold ${Math.max(7, s * 0.24)}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText(String(f.used), cx + r * 1.1, cy - r * 0.6); }
     const max = AIR_FACILITY_CAP[f.kind];
     if (f.cap < max) { ctx.fillStyle = '#c11'; ctx.font = `bold ${Math.max(7, s * 0.26)}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText(`${f.cap}/${max}`, cx, cy + r + s * 0.26); }
   }

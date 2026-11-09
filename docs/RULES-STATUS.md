@@ -82,3 +82,7 @@ Not built: new railway track [24.62, 24.67], unfinished Via Balbia stretches [24
 
 ## SAS Brigade (27.8)
 Built: arrives GT47 (campaign game), raids an Axis airfield or landing strip it stands in (3 CP, no enemy combat units in the hex, once a month and six stages apart), destroys planes on the ground, flying boats unaffected. Stand-in: the SAS Raid Table [27.93] is not in our scan, so the die results are invented (1-2 nothing, 3 10%, 4 25%, 5 33%, 6 50% of each type). Not built: sea or air transport of the SAS, LRDG escort, three-stage supply [27.84-27.88], replacement [27.89], Desert Raider raids.
+
+## Air transfers and base icons
+- Any squadron can be ordered to **transfer** to another friendly base of the right type (airfield/strip; flying boats to basins/alighting areas) that has room. STAND-IN: the range is twice the shortest-range plane in the squadron, or a plane's printed transfer range if longer. The transfer is refused if enemy land units are adjacent to either base or either is under sand/rain. Not yet modelled: carrying supply or passengers, ferry fuel cost.
+- Map icons: a solid disc with a squadron count marks an own base with squadrons based there; a pale dashed disc marks an own base that is empty. Enemy bases keep the plain icon because their occupancy is hidden.

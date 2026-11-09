@@ -18,7 +18,7 @@ import { createFleet } from '../shared/fleet.js';
 import { fleetArrivals, fleetEndStage, cwHasShips, axisHasBoats, validateFleetOrders, resolveFleet, navalFire, damageShips, aaAt, shipAA, available as shipAvailable } from './fleet.js';
 import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
-import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, repairPorts, portEff, portMax, newDamage, fortLevel, fortBase } from './air.js';
+import { transferOptions, fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, repairPorts, portEff, portMax, newDamage, fortLevel, fortBase } from './air.js';
 import { initConstruction, buildSpots, startBuild, cancelBuild, closeStage, buildView as constructionView, STORES_PER_TURN } from './construction.js';
 import {
   SIDES, accessFor, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
@@ -1197,10 +1197,10 @@ function cachedSupplyReach(g, sctx, side, x) {
 // Air Game stage 1: your own squadrons and every air facility you can see (your own, or enemy ones within sight).
 function airView(g, side, seen) {
   g.air ||= createAir(); // saves from before the Air Game
-  const fac = (f) => ({ id: f.id, name: f.name, kind: f.kind, owner: f.owner, cap: f.cap, used: f.used, hex: f.hex, off: !!f.off, own: f.owner === side });
+  const fac = (f) => ({ id: f.id, name: f.name, kind: f.kind, owner: f.owner, cap: f.cap, used: f.owner === side ? f.used : null, hex: f.hex, off: !!f.off, own: f.owner === side });
   return {
     facilities: g.air.facilities.filter((f) => f.owner === side || (f.hex && seen(facilityHex(f)))).map(fac),
-    squadrons: g.air.squadrons.filter((s) => s.side === side).map(summariseSquadron),
+    squadrons: g.air.squadrons.filter((s) => s.side === side).map((s) => ({ ...summariseSquadron(s), moveTo: transferOptions(g, s) })),
     pilots: g.air.pilots[side], sgsu: g.air.sgsu[side], stock: g.air.stock?.[side] || null,
   };
 }

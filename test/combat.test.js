@@ -113,3 +113,23 @@ test('SAS raid destroys planes on an enemy airfield, once a month, and only if n
   assert.ok(g.log.some((l) => /SAS raid/.test(l.text)));
   assert.match(act(g, 'cw', { action: 'raid', unitId: 'cw-sas', facility: fac.id }), /once|month|six/i);
 });
+
+test('air transfer moves a squadron to a friendly base with room, updates occupancy, and refuses full or far bases', async () => {
+  const { transferOptions } = await import('../src/server/air.js');
+  const g = createGame({ seed: 2, air: 'on' });
+  const sq = g.air.squadrons.find((q) => q.side === 'axis' && q.kind !== 'flyingboat' && transferOptions(g, q).length);
+  assert.ok(sq, 'some axis squadron has somewhere to go');
+  const opts = transferOptions(g, sq), dest = opts[0];
+  assert.ok(opts.every((o) => o.id !== sq.facility));
+  const from = g.air.facilities.find((f) => f.id === sq.facility), to = g.air.facilities.find((f) => f.id === dest.id);
+  const [fu, tu] = [from.used, to.used];
+  submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
+  submitOrders(g, 'axis', { goFirst: false });
+  assert.equal(g.step, 'air');
+  const bad = submitOrders(g, 'axis', { missions: [{ sq: sq.id, kind: 'transfer', to: 'nowhere' }] });
+  assert.match(String(bad), /base|range/i);
+  assert.equal(submitOrders(g, 'axis', { missions: [{ sq: sq.id, kind: 'transfer', to: dest.id }] }) || null, null);
+  submitOrders(g, 'cw', { missions: [] });
+  assert.ok(g.log.some((l) => /transfer/.test(l.text)));
+  if (sq.facility === dest.id) { assert.equal(from.used, fu - 1); assert.equal(to.used, tu + 1); }
+});

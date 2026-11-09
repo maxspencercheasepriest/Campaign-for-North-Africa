@@ -216,7 +216,7 @@ export function returnPilots(air, turn) {
 }
 
 // ---------- Orders ----------
-export const MISSION_KINDS = { capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility', bRD: 'Bomb a road', bRR: 'Bomb a railway', bFC: 'Bomb a fortification', bTC: 'Bomb trucks', bPT: 'Bomb a port', bCF: 'Bomb ships' };
+export const MISSION_KINDS = { transfer: 'Transfer to another base', capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility', bRD: 'Bomb a road', bRR: 'Bomb a railway', bFC: 'Bomb a fortification', bTC: 'Bomb trucks', bPT: 'Bomb a port', bCF: 'Bomb ships' };
 const BOMB_KINDS = ['bCU', 'bSD', 'bAF', 'bRD', 'bRR', 'bFC', 'bTC', 'bPT', 'bCF'];
 export const isBombMission = (k) => BOMB_KINDS.includes(k);
 
@@ -231,6 +231,26 @@ function flyable(sq, kind) {
 // Blenheim IVF, Bf 110 and Ju 88c lose 4 Maneuver points by day [40.92].
 const manOf = (p) => planeInfo(p).man - (/Blenheim Mk\.IVF|Bf.?110|Ju.?88c/i.test(p.type) ? 4 : 0);
 
+// Transfer missions [39.0 / 4.44 note]: the whole squadron moves to another friendly facility with room. Stand-in range: a one-way trip
+// is twice a plane's normal range (or its printed transfer range if that is longer); the squadron is limited by its shortest-range plane.
+export function transferRange(sq) {
+  return Math.min(...sq.planes.map((p) => {
+    const info = planeInfo(p);
+    const tr = Math.max(0, ...(info.alt || []).filter((a) => a.note === 'transfer').map((a) => a.range));
+    return Math.max(info.range * 2, tr);
+  }));
+}
+export function transferOptions(g, sq) {
+  const here = g.air.facilities.find((f) => f.id === sq.facility);
+  const from = here && facilityHex(here);
+  if (!from || !sq.planes.length) return [];
+  const range = transferRange(sq), boat = sq.kind === 'flyingboat';
+  return g.air.facilities
+    .filter((f) => f.owner === sq.side && f.id !== sq.facility && f.hex && !f.off && f.used < f.cap && (boat ? f.kind === 'basin' || f.kind === 'alighting' : f.kind === 'airfield' || f.kind === 'strip'))
+    .map((f) => ({ id: f.id, name: f.name, kind: f.kind, hex: f.hex, d: distance(from, facilityHex(f)) }))
+    .filter((f) => f.d <= range).sort((a, b) => a.d - b.d);
+}
+
 export function validateAirOrders(g, side, o, map) {
   if (o.missions != null && !Array.isArray(o.missions)) return 'Missions must be a list.';
   const used = new Set();
@@ -240,6 +260,10 @@ export function validateAirOrders(g, side, o, map) {
     if (used.has(sq.id)) return `${sq.name} has two missions: one per squadron.`;
     used.add(sq.id);
     if (!MISSION_KINDS[m.kind]) return 'Unknown mission.';
+    if (m.kind === 'transfer') {
+      if (!transferOptions(g, sq).some((f) => f.id === m.to)) return `${sq.name}: choose a friendly base with room that is within the squadron's transfer range.`;
+      continue;
+    }
     if (sq.kind === 'fighter' && isBombMission(m.kind)) return `${sq.name} is a fighter squadron; it cannot fly bombing missions.`;
     if (sq.kind === 'bomber' && !isBombMission(m.kind)) return `${sq.name} is a bomber squadron; give it a bombing mission.`;
     if (sq.kind !== 'fighter' && sq.kind !== 'bomber') return `${sq.name}: only fighter and bomber missions are in the game so far.`;
@@ -400,6 +424,19 @@ function bombTarget(f, tons, n, ctx, say) {
   }
 }
 
+function transferSquadron(air, sq, toId, ctx) {
+  const from = air.facilities.find((f) => f.id === sq.facility), to = air.facilities.find((f) => f.id === toId);
+  const fromHex = from && facilityHex(from), toHex = to && to.hex && !to.off && facilityHex(to);
+  const fail = (why) => ctx.log(sq.side, `${sq.name} could not transfer to ${to?.name || toId}: ${why}.`);
+  if (!fromHex || !toHex || to.owner !== sq.side) return fail('no such friendly base');
+  if (to.used >= to.cap) return fail('the base has no room');
+  if (distance(fromHex, toHex) > transferRange(sq)) return fail('out of range');
+  if (baseBlocked(sq, fromHex, ctx) || baseBlocked(sq, toHex, ctx)) return fail('enemy troops beside a base');
+  if (sandOrRain(ctx, fromHex) || sandOrRain(ctx, toHex)) return fail('bad weather');
+  from.used = Math.max(0, from.used - 1); to.used += 1; sq.facility = to.id;
+  ctx.log(sq.side, `${sq.name} transfers from ${from.name} to ${to.name}.`);
+}
+
 export function resolveAir(g, orders, ctx) {
   const air = g.air;
   ctx.air = air;
@@ -412,6 +449,7 @@ export function resolveAir(g, orders, ctx) {
     for (const m of orders[side]?.missions || []) {
       const sq = air.squadrons.find((s) => s.id === m.sq);
       if (!sq) continue;
+      if (m.kind === 'transfer') { transferSquadron(air, sq, m.to, ctx); continue; }
       if (m.kind === 'scramble') { standby.push(sq); continue; }
       const target = hexFromName(m.hex);
       const fl = eligiblePlanes(sq, m.kind, target, ctx);
