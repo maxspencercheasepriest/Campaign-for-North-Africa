@@ -182,7 +182,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
           let odds = null;
           try { odds = previewAttack(room.game, me.side, m); } catch { /* no preview */ }
           ws.send(JSON.stringify({ type: 'odds', id: m.targetId, odds }));
-          break;
+          return; // no state change: a broadcast would redraw the panel and reset the tick boxes
         }
         case 'unready': {
           if (room.phase !== 'game' || !me.side) return;

@@ -247,7 +247,17 @@ function pathTo(reach, k) {
 
 // ---------- Orders panel ----------
 
+// Redrawing the panel (another player acted, new state) must not undo the tick boxes the player is in the middle of setting.
 function renderOrders() {
+  const box = (c) => `${c.dataset.att ? 'att' + c.dataset.att + c.value : c.dataset.optFwd ? 'fwd' + c.dataset.optFwd : c.dataset.optAt ? 'at' + c.dataset.optAt : c.dataset.optProbe ? 'probe' + c.dataset.optProbe : ''}`;
+  const old = $('tab-orders'), saved = new Map();
+  for (const c of old.querySelectorAll('input[type=checkbox][data-att],[data-opt-fwd],[data-opt-at],[data-opt-probe]')) if (box(c)) saved.set(box(c), c.checked);
+  renderOrdersInner();
+  let changed = false;
+  for (const c of old.querySelectorAll('input[type=checkbox]')) { const k = box(c); if (k && saved.has(k) && c.checked !== saved.get(k)) { c.checked = saved.get(k); changed = true; } }
+  if (changed) requestOdds();
+}
+function renderOrdersInner() {
   const el = $('tab-orders');
   const g = S.game;
   const st = S.steps[g.step];
