@@ -378,6 +378,8 @@ function moveCombatPanel() {
       html += `<div class="btnrow"><button data-reserve="${sel.id}" data-off="${sel.reserve ? 1 : 0}">${sel.reserve ? 'Take out of Reserve' : 'Place in Reserve'}</button></div><p class="help">Reserve Designation Phase [18]: do this before anything moves. Units in Reserve I may move one hex; the rest of the Phase they may be released after combat.</p>`;
     }
     const rk = sel && key(...sel.pos);
+    const raidable = sel?.sas ? (g.air?.facilities || []).filter((f) => !f.own && f.hex && !f.off && key(...hexFromName(f.hex)) === rk) : [];
+    for (const f of raidable) html += `<div class="btnrow"><button data-raid="${sel.id}" data-fac="${f.id}">Raid ${esc(f.name)} (3 CP)</button></div><p class="help">SAS raid [27.8]: destroys a share of the planes on the field. Once a month; no enemy combat units may be in the hex.</p>`;
     if (g.rail?.reach?.[rk]) html += `<div class="btnrow"><button id="railBtn">${railMode ? 'Cancel rail move' : 'Move this stack by rail'}</button></div><p class="help">The railway carries one stack (units and supply together) any distance, once per Operations Stage, before anything else moves [8.7]. Click the hex where the train stops.</p>`;
     const inRes = myUnits().filter((u) => u.reserve);
     if (inRes.length) html += `<p class="help">In Reserve: ${inRes.map((u) => `${esc(u.name)} (${u.reserve === 1 ? 'I' : 'II'})`).join(', ')}.</p>`;
@@ -615,6 +617,7 @@ function wireOrders(el) {
     send({ type: 'action', action: b.dataset.act });
   }));
   if ($('railBtn')) $('railBtn').onclick = () => { railMode = !railMode; renderOrders(); drawMap(); };
+  el.querySelectorAll('[data-raid]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'raid', unitId: b.dataset.raid, facility: b.dataset.fac })));
   el.querySelectorAll('[data-build]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'build', kind: b.dataset.build, hex: b.dataset.buildHex })));
   el.querySelectorAll('[data-cancel-build]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'cancelBuild', projectId: +b.dataset.cancelBuild })));
   el.querySelectorAll('[data-reserve]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'reserve', unitIds: [b.dataset.reserve], off: b.dataset.off === '1' })));

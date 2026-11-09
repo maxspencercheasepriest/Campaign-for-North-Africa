@@ -611,6 +611,7 @@ export function act(g, side, a) {
   switch (a?.action) {
     case 'move': return actMove(g, side, a);
     case 'rail': return actRail(g, side, a);
+    case 'raid': return actSasRaid(g, side, a);
     case 'build': return startBuild(g, side, a, constructionCtx(g));
     case 'cancelBuild': return cancelBuild(g, side, a, constructionCtx(g));
     case 'reserve': return actReserve(g, side, a);
@@ -1003,6 +1004,36 @@ export function previewAttack(g, side, a) {
   const map = mapFor(g);
   const ctx = { map, fortLevel: (h) => fortLevel(g.damage, h) };
   return previewAssault(g, ctx, attackers, target.pos, { tankRole: a.tankRole === 'antiArmour' ? 'antiArmour' : 'assault', artilleryForward: a.artilleryForward !== false });
+}
+
+// SAS Brigade raid on an Axis air facility [27.82-27.87]. The SAS Raid Table [27.93] is not in our scan, so the percentages below are a
+// STAND-IN (one die: 1-2 nothing, 3 10%, 4 25%, 5 33%, 6 50% of each type of plane destroyed). Flying boats are never affected.
+const SAS_RAID = { 1: 0, 2: 0, 3: 0.1, 4: 0.25, 5: 0.33, 6: 0.5 };
+function actSasRaid(g, side, a) {
+  const u = g.units.find((x) => x.id === a.unitId && x.side === side && x.sas);
+  if (!u || u.str <= 0) return 'That is not an SAS unit of yours.';
+  if (collapsed(u)) return `${u.name} is too disorganised to raid.`;
+  if (u.reserve) return `${u.name} is in Reserve.`;
+  const now = g.turn * 4 + g.opStage;
+  if (g.sasLast != null && g.turn - g.sasLast.turn < 3) return 'Only one SAS raid may be made per month (three Game-Turns) [27.87].';
+  if (g.sasLast != null && now - (g.sasLast.turn * 4 + g.sasLast.stage) < 6) return 'There must be six Operations Stages between SAS raids [27.87].';
+  const fac = (g.air?.facilities || []).find((f) => f.owner !== side && f.id === a.facility && (f.kind === 'airfield' || f.kind === 'strip') && f.hex && facilityHex(f)[0] === u.pos[0] && facilityHex(f)[1] === u.pos[1]);
+  if (!fac) return 'The SAS must be in the hex of an enemy airfield or landing strip.';
+  if (g.units.some((x) => x.side !== side && x.str > 0 && isCombatUnit(x) && x.pos[0] === u.pos[0] && x.pos[1] === u.pos[1])) return 'Enemy combat units are in the hex: the raid cannot be completed [27.82].';
+  spendCP(g, u, 3);
+  g.sasLast = { turn: g.turn, stage: g.opStage };
+  const roll = d6(g), pct = SAS_RAID[roll];
+  let lost = 0;
+  for (const sq of g.air.squadrons.filter((q) => q.facility === fac.id && q.kind !== 'flyingboat')) {
+    for (const type of new Set(sq.planes.map((p) => p.type))) {
+      const same = sq.planes.filter((p) => p.type === type);
+      const kill = Math.min(same.length, Math.ceil(same.length * pct));
+      for (const p of same.slice(0, kill)) sq.planes.splice(sq.planes.indexOf(p), 1);
+      lost += kill;
+    }
+  }
+  log(g, 'all', `SAS raid on the air facility at ${nameOfHex(...u.pos)} (die ${roll}): ${lost ? `${lost} Axis aircraft destroyed on the ground` : 'no aircraft destroyed'}.`);
+  return null;
 }
 
 function actAttack(g, side, a) {

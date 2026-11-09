@@ -93,3 +93,23 @@ test('the odds preview matches the differential of the real assault and changes 
   if (m) assert.ok(o.defRaw >= Number(m[1]), 'barrage can only lower the defence the preview shows'); // the preview comes before barrage
   assert.ok(g.lastCombat.from.length === 1 && Array.isArray(g.lastCombat.to));
 });
+
+test('SAS raid destroys planes on an enemy airfield, once a month, and only if no enemy combat units are there [27.8]', async () => {
+  const { facilityHex } = await import('../src/shared/air.js');
+  const g = createGame({ seed: 2, air: 'on' });
+  submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {});
+  submitOrders(g, 'axis', { goFirst: false });
+  const fac = g.air.facilities.find((f) => f.owner === 'axis' && f.kind === 'airfield' && f.hex && g.air.squadrons.some((q) => q.facility === f.id && q.kind !== 'flyingboat'));
+  const h = facilityHex(fac);
+  const sas = structuredClone(g.units.find((u) => u.id === 'cw-4ind'));
+  Object.assign(sas, { id: 'cw-sas', name: 'SAS', sas: true, pos: [...h], cpUsed: 0, cohesion: 0 });
+  g.units.push(sas);
+  for (const u of g.units) if (u.side === 'axis' && u.pos[0] === h[0] && u.pos[1] === h[1]) u.pos = [0, 0];
+  g.step = 'movecombat'; g.half = 'A'; g.order = { A: 'cw', B: 'axis' }; g.seg = { n: 1, mode: 'move', moved: [], attacked: [], frozen: [] };
+  const before = g.air.squadrons.filter((q) => q.facility === fac.id).reduce((n, q) => n + q.planes.length, 0);
+  assert.equal(act(g, 'cw', { action: 'raid', unitId: 'cw-sas', facility: fac.id }), null);
+  const after = g.air.squadrons.filter((q) => q.facility === fac.id).reduce((n, q) => n + q.planes.length, 0);
+  assert.ok(after <= before);
+  assert.ok(g.log.some((l) => /SAS raid/.test(l.text)));
+  assert.match(act(g, 'cw', { action: 'raid', unitId: 'cw-sas', facility: fac.id }), /once|month|six/i);
+});
