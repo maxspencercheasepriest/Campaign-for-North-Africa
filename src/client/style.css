@@ -39,7 +39,13 @@ label.row input { width: 70px; }
 .seat.taken { background: #cbbd98; }
 .seat.taken.mine { background: var(--green); color: var(--paper); border-color: var(--green); }
 .seat:disabled { opacity: 1; cursor: default; }
-.lobby-host { display: flex; gap: 16px; justify-content: center; align-items: center; }
+.lobby-host { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 28px; max-width: 900px; padding: 0 12px; box-sizing: border-box; margin: 28px auto 0; text-align: left; align-items: center; }
+.lobby-host > p, .lobby-host > button { grid-column: 1 / -1; }
+.lobby-host > button { justify-self: center; margin-top: 10px; }
+.lobby-host label.row { margin: 0; gap: 12px; }
+.lobby-host label.row { min-width: 0; }
+.lobby-host label.row select { flex: 0 1 62%; width: 62%; min-width: 0; }
+@media (max-width: 800px) { .lobby-host { grid-template-columns: minmax(0, 1fr); } }
 .unseated { margin-top: 16px; opacity: .7; }
 
 #game { flex: 1; display: flex; min-height: 0; }
