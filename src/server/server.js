@@ -21,6 +21,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
     players: [], // { id, token, name, side, role, connected }
     game: null,
     chat: [],
+    marks: { axis: [], cw: [] },
   };
   if (savePath && fs.existsSync(savePath)) {
     try {
@@ -95,6 +96,7 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
         you: { id: me.id, name: me.name, side: me.side, role: me.role, isHost: !!me.isHost },
         phase: room.phase,
         players: room.players.map(({ token, ...p }) => p),
+        marks: me.side ? room.marks?.[me.side] || [] : [],
         chat: room.chat.filter((c) => c.channel === 'all' || c.channel === me.side).slice(-60),
         steps: STEPS,
       };
@@ -201,6 +203,17 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
           if (!text) return;
           room.chat.push({ from: me.name, side: me.side, role: me.role, channel, text, at: Date.now() });
           if (room.chat.length > 400) room.chat.splice(0, 100);
+          break;
+        }
+        case 'mark': {
+          if (!me.side || !room.marks?.[me.side]) return;
+          const list = room.marks[me.side];
+          const hex = (h) => Array.isArray(h) && h.length === 2 && h.every((n) => Number.isInteger(n)) ? h : null;
+          if (m.op === 'add' && m.mark && ['pin', 'arrow'].includes(m.mark.kind) && hex(m.mark.at) && (m.mark.kind === 'pin' || hex(m.mark.to))) {
+            list.push({ id: (list.at(-1)?.id || 0) + 1, kind: m.mark.kind, at: m.mark.at, to: m.mark.kind === 'arrow' ? m.mark.to : undefined, text: String(m.mark.text || '').slice(0, 40), by: me.name });
+            if (list.length > 60) list.shift();
+          } else if (m.op === 'del') { const i = list.findIndex((x) => x.id === m.id); if (i >= 0) list.splice(i, 1); }
+          else if (m.op === 'clear') list.length = 0;
           break;
         }
         case 'kick': {

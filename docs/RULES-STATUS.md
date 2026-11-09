@@ -71,3 +71,6 @@ Every column of every dice table is checked automatically to cover all 36 result
 
 - **Port rewards** (lobby option, on by default): each Game-Turn a side earns 3, 2 or 1 points for every big, medium or small port it took from the other side and still holds. Every 10 points pulls that side's next scheduled reinforcement forward to its best captured port. Points are shown in the Supply tab.
 - **U-boats** (part of the Mediterranean Fleet option): three Axis boats arrive in the autumn of 1941 (Game-Turn 100 and 104). The Axis names a patrol sea hex each stage; a boat finds a ship within one hex on a 5-6, torpedoes the biggest on a 4-6 (3 Gun points off a battleship or heavy cruiser, 2 off others), then is sunk if a die roll is no higher than the number of destroyers within two hexes (max 5). It rests two stages after patrol.
+
+## Interface aids (not rules)
+Click-to-go names (tabs, log, notifications), find box (F), idle-unit cycling (N), notifications list (B), turn-summary pop-up, hover tooltip, minimap (M), last-seen enemy markers, Overview tab, control shading with front line (G), team-only pins/arrows (P/R/X, relayed by the server), and a session replay. Shortcut list: press ?.

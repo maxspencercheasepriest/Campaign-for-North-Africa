@@ -7,6 +7,7 @@ import { FACILITY_NAMES as AIR_FACILITY_NAMES, FACILITY_CAPACITY as AIR_FACILITY
 import { TERRAIN, HEXSIDES, STACKING_POINTS, NON_MOTORISED_VOLUNTARY_LIMIT, CP, stepCost, edgeKey, localWeather } from '/shared/rules.js';
 
 import { BASICS, stepHelp } from './tutorial.js';
+import { installExtras, goLink, linkHexes } from './extras.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -18,6 +19,7 @@ const store = {
 const params = new URLSearchParams(location.search);
 const hostToken = params.get('host');
 const inviteUrl = params.get('invite');
+const extras = {};
 const MAP = buildMap();
 const TILES = MAP.tiles;
 
@@ -112,6 +114,8 @@ function render() {
   renderLog();
   renderChat();
   renderCoach();
+  drawMap();
+  extras.onRender?.();
   drawMap();
 }
 
@@ -578,13 +582,13 @@ function renderSupply() {
   const sup = (g.supply || []).filter((x) => x.own);
   const v = g.victory;
   const cols = acc.unitDetail === 2 ? '<th>CP</th><th>Coh</th>' : '';
-  const row = (u) => `<tr class="${(acc.unitDetail === 2 && u.cohesion <= -10) || (u.fuelNeed > u.fuelAvail) ? 'warn' : ''}"><td>${esc(u.name)}</td>${acc.unitDetail === 2 ? `<td>${fmtCP(u.cpUsed)}/${u.cpa}</td><td>${u.cohesion}</td>` : ''}<td>${u.str}/${u.maxStr}</td><td>${u.fuelNeed || '–'}</td><td>${n(u.fuelAvail)}</td><td>${n(u.ammoAvail)}${u.ammoNeed ? `/${u.ammoNeed}` : ''}</td></tr>`;
+  const row = (u) => `<tr class="${(acc.unitDetail === 2 && u.cohesion <= -10) || (u.fuelNeed > u.fuelAvail) ? 'warn' : ''}"><td>${goLink(u.name, u.pos, u.id)}</td>${acc.unitDetail === 2 ? `<td>${fmtCP(u.cpUsed)}/${u.cpa}</td><td>${u.cohesion}</td>` : ''}<td>${u.str}/${u.maxStr}</td><td>${u.fuelNeed || '–'}</td><td>${n(u.fuelAvail)}</td><td>${n(u.ammoAvail)}${u.ammoNeed ? `/${u.ammoNeed}` : ''}</td></tr>`;
   const formations = acc.unitDetail >= 1
     ? `<h3>Formations</h3><table class="grid"><tr><th>Unit</th>${cols}<th>Str</th><th>Fuel need</th><th>Fuel</th><th>Ammo</th></tr>${myUnits().map(row).join('')}</table>
       ${myUnits().filter((u) => u.supplyNote).map((u) => `<p class="bad"><b>${esc(u.name)}:</b> ${esc(u.supplyNote)}</p>`).join('')}` : '';
   const dumps = acc.supply === 2
     ? `<h3>Supply units</h3><table class="grid"><tr><th>Where</th><th>Ammo</th><th>Fuel</th></tr>
-      ${sup.map((x) => `<tr><td>${esc(hexLabel(key(...x.pos)))}</td><td>${n(x.ammo)}</td><td>${n(x.fuel)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None in the field.</td></tr>'}</table>`
+      ${sup.map((x) => `<tr><td>${goLink(hexLabel(key(...x.pos)), x.pos)}</td><td>${n(x.ammo)}</td><td>${n(x.fuel)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None in the field.</td></tr>'}</table>`
     : g.supplyTotals ? `<h3>Supplies</h3><p>${g.supplyTotals.units} supply units in the field, holding <b>${n(g.supplyTotals.ammo)}</b> Ammo and <b>${n(g.supplyTotals.fuel)}</b> Fuel in all. The Logistics and Rear Area Commanders have the detail.</p>` : '';
   const box = acc.convoys >= 1 && g.box != null && mySide() === 'axis' ? `<p>Waiting in Tripoli: <b>${g.box}</b> supply unit${g.box === 1 ? '' : 's'}.</p>` : '';
   el.innerHTML = `${formations}${dumps}${box}
@@ -617,7 +621,7 @@ function lastAirReport() {
     const where = esc(nameOfHex(...f.to));
     const what = AIR_VERB[f.kind] || f.kind;
     const out = f.failed ? esc(f.result) : `${f.sent} plane${f.sent === 1 ? '' : 's'}${f.lost ? `, ${f.lost} lost` : ''}${f.aborted ? `, ${f.aborted} turned back` : ''}${f.result ? `: ${esc(f.result)}` : ''}`;
-    return `<tr class="${mine ? '' : 'warn'}"><td>${mine ? esc(f.name) : 'Enemy'}</td><td>${f.scrambled ? 'scrambled to ' : ''}${what}</td><td>${where}</td><td>${out}</td></tr>`;
+    return `<tr class="${mine ? '' : 'warn'}"><td>${mine ? esc(f.name) : 'Enemy'}</td><td>${f.scrambled ? 'scrambled to ' : ''}${what}</td><td>${goLink(nameOfHex(...f.to), f.to)}</td><td>${out}</td></tr>`;
   }).join('');
   return `<h3>Last air phase <span class="muted">(Game-Turn ${la.turn}, Operations Stage ${la.stage})</span></h3>${rows ? `<table class="grid"><tr><th>Flight</th><th>Mission</th><th>Over</th><th>Result</th></tr>${rows}</table>` : '<p class="muted">No missions were flown.</p>'}`;
 }
@@ -636,9 +640,9 @@ function renderAir() {
   el.innerHTML = `<h3>Air forces</h3>
     <p><b>${planes}</b> aircraft in <b>${a.squadrons.length}</b> squadrons (<b>${ready}</b> ready to fly). Rated pilots: ${pilots || 'none'} (others fly as zero-rated). Squadron Ground Support Units available: ${a.sgsu}.</p>
     <table class="grid"><tr><th>Squadron</th><th>Role</th><th>Based at</th><th>Planes</th><th>Ready</th><th>Pilots</th></tr>
-    ${a.squadrons.map((s) => `<tr><td>${esc(s.name)}</td><td>${KIND_LABEL[s.kind] || s.kind}</td><td>${esc(fname(s.facility))}</td><td>${s.total}</td><td>${s.ready}</td><td>${s.pilots.length ? s.pilots.join(', ') : '–'}</td></tr>`).join('')}</table>
+    ${a.squadrons.map((s) => `<tr><td>${esc(s.name)}</td><td>${KIND_LABEL[s.kind] || s.kind}</td><td>${(() => { const f = a.facilities.find((q) => q.id === s.facility); const h = f?.hex && !f.off ? hexFromName(f.hex) : null; return goLink(fname(s.facility), h); })()}</td><td>${s.total}</td><td>${s.ready}</td><td>${s.pilots.length ? s.pilots.join(', ') : '–'}</td></tr>`).join('')}</table>
     <h3>Air facilities</h3><table class="grid"><tr><th>Facility</th><th>Type</th><th>Squadrons</th><th>Hex</th></tr>
-    ${a.facilities.map((f) => `<tr class="${f.own ? '' : 'warn'}"><td>${esc(f.name)}${f.own ? '' : ' (enemy)'}</td><td>${esc(AIR_FACILITY_NAMES[f.kind])}</td><td>${f.own ? `${f.used}/${f.cap}` : '–'}</td><td>${f.off ? 'off-map' : esc(f.hex)}</td></tr>`).join('')}</table>
+    ${a.facilities.map((f) => `<tr class="${f.own ? '' : 'warn'}"><td>${f.hex && !f.off ? goLink(f.name, hexFromName(f.hex)) : esc(f.name)}${f.own ? '' : ' (enemy)'}</td><td>${esc(AIR_FACILITY_NAMES[f.kind])}</td><td>${f.own ? `${f.used}/${f.cap}` : '–'}</td><td>${f.off ? 'off-map' : f.hex ? goLink(f.hex, hexFromName(f.hex)) : ''}</td></tr>`).join('')}</table>
     ${lastAirReport()}
     <p class="help">Squadrons are 12 Italian planes (9 ready, 3 in reserve) or 20 Commonwealth planes (15 + 5) [35.23]. Fighter and bomber missions are given in the Orders tab during the Land Support Air Phase; flights are drawn on the map afterwards. Flak, recon and convoy bombing are not built yet.</p>`;
 }
@@ -711,7 +715,7 @@ for (const b of document.querySelectorAll('#tabs button')) {
 // ---------- Log / chat ----------
 
 function renderLog() {
-  $('tab-log').innerHTML = (S.game.log || []).slice().reverse().map((l) => `<p class="logline ${l.side}"><span class="muted">GT${l.turn}${l.stage ? '.' + l.stage : ''}</span> ${esc(l.text)}</p>`).join('') || '<p class="muted">Nothing yet.</p>';
+  $('tab-log').innerHTML = (S.game.log || []).slice().reverse().map((l) => `<p class="logline ${l.side}"><span class="muted">GT${l.turn}${l.stage ? '.' + l.stage : ''}</span> ${linkHexes(esc(l.text))}</p>`).join('') || '<p class="muted">Nothing yet.</p>';
 }
 
 function renderChat() {
@@ -906,6 +910,7 @@ function drawMap() {
     ctx.fillStyle = x.side === 'axis' ? '#6b6b4a' : '#7a5a2e'; ctx.strokeStyle = x.id === selectedSupply ? '#d11' : '#111'; ctx.lineWidth = x.id === selectedSupply ? 2.5 : 1;
     ctx.fillRect(px + s * 0.3, py - s * 0.8, s * 0.38, s * 0.38); ctx.strokeRect(px + s * 0.3, py - s * 0.8, s * 0.38, s * 0.38);
   }
+  extras.drawUnder?.();
   // Air facilities: a plane on a disc in the owner's colours; a small number shows capacity left when it has been bombed
   if (s >= 8) for (const f of S.game.air?.facilities || []) {
     if (!f.hex) continue;
@@ -939,6 +944,7 @@ function drawMap() {
   for (const u of S.game.units) { const k = key(...u.pos); if (!stacks.has(k)) stacks.set(k, []); stacks.get(k).push(u); }
   for (const list of stacks.values()) list.forEach((u, i) => drawCounter(u, i, list.length));
   drawAirOverlay();
+  extras.drawOver?.();
 }
 
 // Flight paths from the last Land Support Air Phase, plus the missions being planned now.
@@ -1114,6 +1120,7 @@ function showHexInfo([c, r]) {
 
 function clickHex([c, r]) {
   if (!S?.game || S.game.over || !mySide()) return;
+  if (extras.handleMapClick?.([c, r])) return;
   if (S.game.step === 'trucks' && S.canAct) {
     const k0 = key(c, r);
     const here = (S.game.supply || []).filter((x) => x.own && key(...x.pos) === k0 && !x.moved && !(draft.moves || []).some((m) => m.id === x.id));
@@ -1182,3 +1189,10 @@ window.__desertCommand = {
     drawMap();
   },
 };
+
+installExtras(Object.assign(extras, {
+  $, view, canvas, ctx, drawMap, send, toast, centre, hexPath, sharedEdge, TILES, MAP, LOCATIONS, VISION_RANGE, COLORS,
+  S: () => S, sideName, facilityCap: AIR_FACILITY_CAP,
+  selectUnit: (id) => { if (myUnits().some((u) => u.id === id)) { selected = id; selectedSupply = null; renderOrders(); drawMap(); } },
+  cancel: () => { selected = null; selectedSupply = null; railMode = false; if (S?.game) { renderOrders(); drawMap(); } },
+}));

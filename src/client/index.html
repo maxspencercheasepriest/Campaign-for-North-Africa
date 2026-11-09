@@ -65,13 +65,29 @@
       <canvas id="map"></canvas>
       <div id="coach" class="coach hidden"></div>
       <div id="hexInfo" class="hexinfo"></div>
-      <div class="maphelp">Drag to pan · wheel to zoom</div>
+      <div class="maphelp">Drag to pan · wheel to zoom · ? for shortcuts</div>
+      <div id="mapTools" class="maptools">
+        <input id="findBox" list="findList" placeholder="Find unit, town or hex (F)" autocomplete="off"><datalist id="findList"></datalist>
+        <button id="idleBtn" title="Next unit that has not moved (N)">Idle unit</button>
+        <button id="shadeBtn" title="Shade who controls the ground (G)">Control</button>
+        <button id="replayBtn" title="Replay what you have seen this session">Replay</button>
+        <button id="helpBtn" title="Keyboard shortcuts (?)">?</button>
+      </div>
+      <div id="markBar" class="markbar">
+        <button data-mark="pin" title="Pin (P)">Pin</button><button data-mark="arrow" title="Arrow (R)">Arrow</button><button data-mark="erase" title="Erase (X)">Erase</button><button data-mark="clear">Clear all</button>
+        <input id="markText" maxlength="40" placeholder="label (team only)">
+      </div>
+      <div id="notes" class="notes hidden"></div>
+      <div id="tip" class="tip hidden"></div>
+      <canvas id="mini" class="mini" width="200" height="130"></canvas>
+      <div id="replayBar" class="replaybar hidden"></div>
     </div>
     <aside id="panel">
       <nav id="tabs">
         <button data-tab="orders" class="active">Orders</button>
         <button data-tab="supply">Supply</button>
         <button data-tab="air">Air</button>
+        <button data-tab="overview">Overview</button>
         <button data-tab="staff">Staff</button>
         <button data-tab="log">Log</button>
         <button data-tab="chat">Chat</button>
@@ -79,6 +95,7 @@
       <section id="tab-orders" class="tab"></section>
       <section id="tab-supply" class="tab hidden"></section>
       <section id="tab-air" class="tab hidden"></section>
+      <section id="tab-overview" class="tab hidden"></section>
       <section id="tab-staff" class="tab hidden"></section>
       <section id="tab-log" class="tab hidden"></section>
       <section id="tab-chat" class="tab hidden">
@@ -92,6 +109,19 @@
     </aside>
   </div>
 
+  <div id="turnSummary" class="overlay hidden"></div>
+  <div id="shortcutHelp" class="overlay hidden"><div class="dialog"><h2>Shortcuts</h2>
+    <table class="grid">
+      <tr><td><b>N</b> / <b>Shift+N</b></td><td>next / previous idle unit</td></tr>
+      <tr><td><b>F</b></td><td>find a unit, town, facility or hex (type A1234)</td></tr>
+      <tr><td><b>1–7</b></td><td>switch tab</td></tr>
+      <tr><td><b>G</b></td><td>shade who controls the ground, with the front line</td></tr>
+      <tr><td><b>M</b></td><td>show or hide the minimap</td></tr>
+      <tr><td><b>B</b></td><td>open the notifications list</td></tr>
+      <tr><td><b>P</b> / <b>R</b> / <b>X</b></td><td>team pin / arrow / erase (shared with your side only)</td></tr>
+      <tr><td><b>Esc</b></td><td>cancel selection, close pop-ups</td></tr>
+      <tr><td><b>?</b></td><td>this list</td></tr>
+    </table><p class="help">Names in blue in the tabs and log are links: click one to jump the map there.</p></div></div>
   <div id="toast" class="toast hidden"></div>
   <script type="module" src="client.js"></script>
 </body>
