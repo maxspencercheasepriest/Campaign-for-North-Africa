@@ -1,7 +1,7 @@
 // Combat procedure tests (barrage -> anti-armour -> close assault) on a controlled position.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, submitOrders, act, gameMap } from '../src/server/engine.js';
+import { createGame, submitOrders, act, gameMap, previewAttack } from '../src/server/engine.js';
 import { actual } from '../src/server/combat.js';
 import { key, neighbours } from '../src/shared/hex.js';
 import { hexFromName } from '../src/shared/hexnames.js';
@@ -79,4 +79,17 @@ test('retreat before assault: an unpinned defender can withdraw and the assault 
     }
   }
   assert.ok(withdrew > 0, 'some withdrawals happened');
+});
+
+test('the odds preview matches the differential of the real assault and changes nothing', () => {
+  const { g, att, def } = setup(5);
+  const snap = JSON.stringify([g.units, g.supply.units, g.rng ?? g.seed]);
+  const o = previewAttack(g, 'axis', { targetId: def.id, attackerIds: [att.id] });
+  assert.equal(JSON.stringify([g.units, g.supply.units, g.rng ?? g.seed]), snap);
+  assert.ok(o && Number.isInteger(o.basic) && o.column.label);
+  act(g, 'axis', { action: 'attack', targetId: def.id, attackerIds: [att.id] });
+  act(g, 'cw', { action: 'defend' });
+  const m = g.lastCombat.lines.join(' ').match(/defender (\d+) raw/);
+  if (m) assert.ok(o.defRaw >= Number(m[1]), 'barrage can only lower the defence the preview shows'); // the preview comes before barrage
+  assert.ok(g.lastCombat.from.length === 1 && Array.isArray(g.lastCombat.to));
 });

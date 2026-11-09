@@ -41,6 +41,61 @@ function sideMorale(units) {
   return { basic: avg((u) => u.morale ?? 0), cohesion: avg((u) => u.cohesion) };
 }
 
+// ---- Odds preview: the close-assault differential and column the attack would start from, before dice ----
+// Mirrors the arithmetic of resolveCombat without side effects. Barrage, anti-armour fire and morale rolls can still move the
+// column, so the figures are a starting point. The defender is assumed to take the automatic dispositions.
+export function previewAssault(g, ctx, attackers, targetPos, opts = {}) {
+  const { map } = ctx;
+  const side = attackers[0].side;
+  const defenders = g.units.filter((u) => u.side !== side && u.str > 0 && u.pos[0] === targetPos[0] && u.pos[1] === targetPos[1]);
+  if (!defenders.length) return null;
+  const terr = TERRAIN[map.tiles[key(...targetPos)].t];
+  const fort = ctx.fortLevel ? ctx.fortLevel(targetPos) : terr.fortified ? 2 : 0;
+  const tShift = Math.min(shift(terr.combat?.closeAssault), fort ? -fort : 0);
+  const tag = (units) => units.flatMap((u) => u.elements.map((e) => ({ u, e })));
+  const att = tag(attackers), def = tag(defenders);
+  const tankRole = opts.tankRole || 'assault', artyForward = opts.artilleryForward !== false;
+  const attCA = att.filter((x) => W(x.e).kind === 'inf' || (W(x.e).kind === 'tank' && tankRole === 'assault') || (W(x.e).kind === 'gun' && artyForward));
+  const attAT = att.filter((x) => W(x.e).kind === 'at' || (W(x.e).kind === 'tank' && tankRole === 'antiArmour'));
+  const defCA = def.filter((x) => W(x.e).kind === 'inf');
+  const noPin = new Map();
+  const attRaw = rawOf(attCA, 'off', noPin), defRaw = rawOf(defCA, 'def', noPin);
+  if (defRaw <= 0) return { empty: true, attRaw, defRaw: 0, fort, terrain: terr.label, note: 'Nothing there could defend in the close assault: the hex would be abandoned.' };
+  let attAct = attRaw < 5 ? 0 : actual(attRaw), defAct = defRaw < 5 ? 0 : actual(defRaw);
+  if (attRaw < 10 && defRaw < 10) { attAct = attRaw < 5 ? 0 : attRaw; defAct = defRaw < 5 ? 0 : defRaw; }
+  const hasArmour = def.some((x) => W(x.e).ap > 0);
+  if (!hasArmour && attAT.length) attAct += Math.floor(actual(rawOf(attAT, 'arm')) / 4);
+  const comb = (xs) => {
+    const tanks = xs.filter((x) => W(x.e).kind === 'tank').reduce((n, x) => n + x.e.toe, 0);
+    const inf = xs.filter((x) => W(x.e).kind === 'inf').reduce((n, x) => n + x.e.toe, 0);
+    return Math.min(4, Math.ceil(Math.max(0, tanks - inf) / 3));
+  };
+  attAct = Math.max(0, attAct - comb(attCA)); defAct = Math.max(0, defAct - comb(defCA));
+  const basic = attAct - defAct;
+  let shifts = 0; const notes = [];
+  if (tShift) { shifts += tShift; notes.push(`${fort ? 'fortification' : 'terrain'} ${tShift}`); }
+  const crossings = attackers.map((u) => crossing(map, u.pos, targetPos)).filter(Boolean);
+  if (crossings.length) {
+    const hs = crossings.map((c) => shift(HEXSIDES[c]?.combat?.closeAssault));
+    const hsShift = Math.min(...hs.filter((v) => v < 0), 0) + Math.max(...hs.filter((v) => v > 0), 0);
+    if (hsShift) { shifts += hsShift; notes.push(`hexside ${hsShift > 0 ? '+' : ''}${hsShift}`); }
+  }
+  if (attRaw >= 2 * defRaw) { shifts += 2; notes.push('2:1 raw +2'); } else if (defRaw >= 2 * attRaw) { shifts -= 2; notes.push('2:1 raw −2'); }
+  const spA = Math.max(...attackers.map((u) => STACKING_POINTS[u.size] ?? 0)), spD = Math.max(...defenders.map((u) => STACKING_POINTS[u.size] ?? 0));
+  const org = spA > spD ? orgSizeShift(spA, spD) : -orgSizeShift(spD, spA);
+  if (org) { shifts += org; notes.push(`size ${org > 0 ? '+' : ''}${org}`); }
+  const top = CA_COLUMNS.length - 1;
+  const base = Math.max(0, Math.min(top, caColumnForDifferential(basic) + shifts));
+  const loss = (tbl, col) => { let n = 0, c = 0; for (let a = 1; a <= 6; a++) for (let b = 1; b <= 6; b++) { c++; n += tbl[col][a * 10 + b] || 0; } return Math.round(n / c); };
+  const colInfo = (col) => ({ label: CA_COLUMN_LABELS[col], overrun: col >= CA_OVERRUN_FROM, attLoss: loss(CA_ATTACKER_LOSS, col), defLoss: loss(CA_DEFENDER_LOSS, col) });
+  const around = [-1, 0, 1].map((d) => Math.max(0, Math.min(top, base + d)));
+  return {
+    attRaw, defRaw, attAct, defAct, basic, notes, fort, terrain: terr.label,
+    column: colInfo(base), low: colInfo(around[0]), high: colInfo(around[2]),
+    attackerTOE: attackers.reduce((n, u) => n + u.str, 0), defenderTOE: defenders.reduce((n, u) => n + u.str, 0),
+  };
+}
+
 // Remove TOE points so that at least `points` of `rating` are absorbed [14.43, 15.83d].
 function absorb(pool, rating, points, removed) {
   let left = points;

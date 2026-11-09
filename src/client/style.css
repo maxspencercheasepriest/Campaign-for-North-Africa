@@ -139,3 +139,8 @@ a.go:hover { color: #c1440e; }
 .replaybar { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; background: #f4ecd8f2; padding: 6px 10px; z-index: 5; }
 .replaybar input[type=range] { width: 260px; }
 ul.sum { margin: 0; padding-left: 18px; max-width: 520px; font-size: 13px; }
+
+.oddsbox { background: #efe3c3; border-left: 4px solid #8a6d1f; padding: 6px 8px; margin: 6px 0; font-size: 12px; }
+.oddsbox .good, .good { color: #1d6b2f; } .oddsbox .bad { color: #a3241a; }
+.meter { position: relative; height: 8px; margin: 5px 0; background: linear-gradient(90deg, #b3261e, #d8c26a 50%, #2f7d3a); border-radius: 4px; }
+.meter i { position: absolute; top: -3px; width: 4px; height: 14px; background: #111; transform: translateX(-2px); }

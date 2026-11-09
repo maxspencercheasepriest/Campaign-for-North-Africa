@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { SIDES, ROLES } from '../shared/scenario.js';
-import { createGame, submitOrders, unready, act, viewFor, currentStep, actingSides, actingRole, autoDecide, autoOrders, STEPS } from './engine.js';
+import { previewAttack, createGame, submitOrders, unready, act, viewFor, currentStep, actingSides, actingRole, autoDecide, autoOrders, STEPS } from './engine.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(here, '..');
@@ -175,6 +175,13 @@ export function startServer({ port = 0, savePath = null, hostToken = crypto.rand
           if (authority(me.side, role)?.id !== me.id) return reply(ws, 'error', `This is for the ${role} seat.`);
           const err = act(room.game, me.side, m);
           if (err) return reply(ws, 'error', err);
+          break;
+        }
+        case 'odds': {
+          if (room.phase !== 'game' || !me.side) return;
+          let odds = null;
+          try { odds = previewAttack(room.game, me.side, m); } catch { /* no preview */ }
+          ws.send(JSON.stringify({ type: 'odds', id: m.targetId, odds }));
           break;
         }
         case 'unready': {

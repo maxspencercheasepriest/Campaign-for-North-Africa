@@ -28,7 +28,7 @@ import {
   receiveArrivals, scheduleConvoys, landConvoys, convoyList, moveSupply, resetMoved, axisConvoyLevel, cwSupplyPeriod,
   MAX_PER_CONVOY_LANE,
 } from './supply.js';
-import { resolveCombat, makeRetreat, rawDefensiveCA, syncStr } from './combat.js';
+import { resolveCombat, makeRetreat, rawDefensiveCA, syncStr, previewAssault } from './combat.js';
 import {
   turnDate, initiativeRating, CP, NON_MOTORISED_VOLUNTARY_LIMIT, COHESION_MAX, COHESION_COLLAPSE,
   REST_RP, VICTORY_RP, HEAVY_LOSS_DP, CONTINUAL_MOVE_RANGE, STACKING_POINTS, TERRAIN, HEXSIDES,
@@ -980,6 +980,17 @@ function actNextSegment(g, side) {
 }
 
 // Combat [11.0-15.0]: one assault on one enemy hex per segment [15.23], full procedure in combat.js.
+// Odds for an attack being planned (no state changes, no dice). The enemy's true strength is used.
+export function previewAttack(g, side, a) {
+  const target = g.units.find((x) => x.id === a.targetId && x.side !== side);
+  if (!target) return null;
+  const attackers = (a.attackerIds || []).map((id) => g.units.find((x) => x.id === id && x.side === side && x.str > 0)).filter(Boolean);
+  if (!attackers.length) return null;
+  const map = mapFor(g);
+  const ctx = { map, fortLevel: (h) => (map.tiles[key(...h)]?.t === 'majorcity' ? fortLevel(g.damage, h) : 0) };
+  return previewAssault(g, ctx, attackers, target.pos, { tankRole: a.tankRole === 'antiArmour' ? 'antiArmour' : 'assault', artilleryForward: a.artilleryForward !== false });
+}
+
 function actAttack(g, side, a) {
   if (g.seg.mode !== 'combat') return 'Finish movement and start the combat segment first.';
   const target = g.units.find((x) => x.id === a.targetId && x.side !== side);
@@ -1075,8 +1086,16 @@ function actDefend(g, side, a = {}) {
     u.ammo = paid ? 1 : 0;
     if (!paid && a.artilleryForward) { defOpts.artilleryForward = false; log(g, 'all', `${u.name} has no ammunition and cannot fire.`); }
   }
+  const fromPos = attackers.map((u) => [...u.pos]);
+  const toeOf = (list) => list.reduce((n, u) => n + u.str, 0);
+  const defBefore = g.units.filter((u) => u.side !== phasing && u.pos[0] === atk.targetPos[0] && u.pos[1] === atk.targetPos[1]);
+  const aToe0 = toeOf(attackers), dToe0 = toeOf(defBefore);
   const res = resolveCombat(g, ctx, attackers, atk.targetPos, { probe: atk.probe, artilleryForward: atk.artilleryForward, tankRole: atk.tankRole, defence: defOpts });
-  g.lastCombat = { turn: g.turn, stage: g.opStage, lines: res.lines, title: `${attackers.map((u) => u.name).join(', ')} → ${atk.targetName}` };
+  g.combatN = (g.combatN || 0) + 1;
+  g.lastCombat = {
+    n: g.combatN, turn: g.turn, stage: g.opStage, lines: res.lines, title: `${attackers.map((u) => u.name).join(', ')} → ${atk.targetName}`,
+    from: fromPos, to: [...atk.targetPos], aLost: aToe0 - toeOf(attackers), dLost: dToe0 - toeOf(defBefore), cleared: !!res.defendersCleared, probe: !!atk.probe,
+  };
   removeDestroyed(g);
   if (res.defendersCleared && !res.vacatedBeforeAssault) for (const u of attackers.filter((x) => x.str > 0)) earnRP(u, VICTORY_RP); // [6.24.2]
   updateOwnership(g);

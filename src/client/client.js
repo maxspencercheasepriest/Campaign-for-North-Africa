@@ -47,6 +47,7 @@ function connect() {
     if (m.type === 'welcome') store.set(`dc:token:${location.host}`, m.token);
     else if (m.type === 'error') toast(m.text);
     else if (m.type === 'state') { S = m; render(); }
+    else if (m.type === 'odds') { oddsCache[m.id] = m.odds; const el = document.querySelector(`[data-odds="${m.id}"]`); if (el) el.innerHTML = oddsHtml(m.odds); }
   };
   ws.onclose = () => {
     $('conn').textContent = 'reconnecting…';
@@ -54,6 +55,7 @@ function connect() {
     setTimeout(connect, 1500);
   };
 }
+const oddsCache = {};
 const send = (msg) => ws?.readyState === 1 && ws.send(JSON.stringify(msg));
 
 function toast(text) {
@@ -104,6 +106,8 @@ function render() {
   const sk = `${g.turn}:${g.opStage}:${g.step}:${g.half}`;
   if (sk !== draftStageKey) { draftStageKey = sk; draft = g.myOrders ? structuredClone(g.myOrders) : {}; }
   if (selected && !myUnits().some((u) => u.id === selected)) selected = null;
+  if (combatSeen === null) combatSeen = g.lastCombat?.n ?? 0;
+  if (g.lastCombat?.n != null && g.lastCombat.n !== combatSeen) { combatSeen = g.lastCombat.n; startCombatAnim(g.lastCombat); }
   if (g.lastAir && g.lastAir.n !== airSeen) { const first = airSeen === null; airSeen = g.lastAir.n; if (!first) startAirAnim(); }
   applyTabAccess();
   renderOrders();
@@ -424,8 +428,68 @@ function combatList() {
           <label class="check"><input type="checkbox" data-opt-at="${e.id}"> Tanks fire anti-armour <span class="muted">(instead of joining the close assault)</span></label>
           <label class="check"><input type="checkbox" data-opt-probe="${e.id}"> Probe only <span class="muted">(2 CP, 2 Ammo each, no Engaged result)</span></label>
         </div>
+        <div class="odds" data-odds="${e.id}">${oddsHtml(oddsCache[e.id])}</div>
         <button class="act" data-attack="${e.id}">Attack</button>`}</div>`;
     }).join('') + lastCombatReport();
+}
+
+function oddsHtml(o) {
+  if (!o) return '<span class="muted">Working out the odds…</span>';
+  if (o.empty) return `<b>Odds:</b> ${esc(o.note)}`;
+  const tone = o.basic > 0 ? 'good' : o.basic < 0 ? 'bad' : '';
+  const pct = (c) => `you lose ~${c.attLoss}% / they lose ~${c.defLoss}%`;
+  const meter = Math.max(4, Math.min(96, 50 + o.basic * 4));
+  return `<div class="oddsbox"><b>Odds:</b> attack ${o.attAct} vs defence ${o.defAct} (raw ${o.attRaw} v ${o.defRaw}) → differential <b class="${tone}">${o.basic > 0 ? '+' : ''}${o.basic}</b>${o.notes.length ? `, shifts ${esc(o.notes.join(', '))}` : ''}
+    <div class="meter"><i style="left:${meter}%"></i></div>
+    <div>Starts at column <b>${o.column.label}</b>${o.column.overrun ? ' <b class="good">(overrun)</b>' : ''}: ${pct(o.column)} of raw strength on average.</div>
+    <div class="muted">Morale and barrage can move it: one column down ${pct(o.low)}; one up ${pct(o.high)}. Uses the defenders' true strength and assumes their automatic dispositions.</div></div>`;
+}
+let oddsTimer = null;
+function requestOdds() {
+  clearTimeout(oddsTimer);
+  oddsTimer = setTimeout(() => {
+    for (const box of document.querySelectorAll('[data-odds]')) {
+      const id = box.dataset.odds, el = $('tab-orders');
+      const attackerIds = [...el.querySelectorAll(`[data-att="${id}"]:checked`)].map((c) => c.value);
+      if (!attackerIds.length) { box.innerHTML = '<span class="muted">Tick an attacking unit to see the odds.</span>'; continue; }
+      send({ type: 'odds', targetId: id, attackerIds, artilleryForward: el.querySelector(`[data-opt-fwd="${id}"]`)?.checked, tankRole: el.querySelector(`[data-opt-at="${id}"]`)?.checked ? 'antiArmour' : 'assault' });
+    }
+  }, 60);
+}
+
+let combatSeen = null, combatAnim = null;
+function startCombatAnim(c) {
+  combatAnim = { c, start: performance.now(), dur: 2600 };
+  const tick = () => {
+    if (!combatAnim) return;
+    drawMap();
+    if (performance.now() - combatAnim.start < combatAnim.dur) requestAnimationFrame(tick); else { combatAnim = null; drawMap(); }
+  };
+  requestAnimationFrame(tick);
+}
+// Arrows run from each attacker to the target, then the target flashes red (losses) or the attackers pulse (repulsed).
+function drawCombatAnim() {
+  if (!combatAnim) return;
+  const { c, start, dur } = combatAnim, t = Math.min(1, (performance.now() - start) / dur);
+  const to = centre(...c.to), s = view.size;
+  ctx.save();
+  const go = Math.min(1, t / 0.4);
+  for (const f of c.from) {
+    const a = centre(...f), x = a.x + (to.x - a.x) * go, y = a.y + (to.y - a.y) * go;
+    ctx.strokeStyle = '#c1121f'; ctx.fillStyle = '#c1121f'; ctx.lineWidth = Math.max(2, s * 0.15);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(x, y); ctx.stroke();
+    const ang = Math.atan2(to.y - a.y, to.x - a.x), hd = s * 0.6;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - hd * Math.cos(ang - 0.5), y - hd * Math.sin(ang - 0.5)); ctx.lineTo(x - hd * Math.cos(ang + 0.5), y - hd * Math.sin(ang + 0.5)); ctx.closePath(); ctx.fill();
+  }
+  if (t > 0.4) {
+    const k = (t - 0.4) / 0.6;
+    ctx.strokeStyle = `rgba(255,120,0,${1 - k})`; ctx.lineWidth = 4;
+    for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(to.x, to.y, s * (0.4 + k * 1.6 + i * 0.35), 0, 7); ctx.stroke(); }
+    ctx.fillStyle = `rgba(255,255,255,${0.7 * (1 - k)})`; ctx.font = `bold ${Math.max(12, s * 0.8)}px sans-serif`; ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(150,10,10,${1 - k})`;
+    ctx.fillText(c.cleared ? 'HEX TAKEN' : c.dLost || c.aLost ? `−${c.dLost} / −${c.aLost}` : 'NO EFFECT', to.x, to.y - s * (1.2 + k * 1.2));
+  }
+  ctx.restore();
 }
 
 function lastCombatReport() {
@@ -552,6 +616,8 @@ function wireOrders(el) {
       probe: el.querySelector(`[data-opt-probe="${id}"]`).checked,
     });
   }));
+  el.querySelectorAll('[data-att],[data-opt-fwd],[data-opt-at]').forEach((c) => c.addEventListener('change', requestOdds));
+  if (el.querySelector('[data-odds]')) requestOdds();
   el.querySelectorAll('[data-del-move]').forEach((b) => (b.onclick = () => { draft.moves.splice(+b.dataset.delMove, 1); renderOrders(); drawMap(); }));
 }
 
@@ -944,6 +1010,7 @@ function drawMap() {
   for (const u of S.game.units) { const k = key(...u.pos); if (!stacks.has(k)) stacks.set(k, []); stacks.get(k).push(u); }
   for (const list of stacks.values()) list.forEach((u, i) => drawCounter(u, i, list.length));
   drawAirOverlay();
+  drawCombatAnim();
   extras.drawOver?.();
 }
 
