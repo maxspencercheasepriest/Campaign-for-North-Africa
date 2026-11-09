@@ -389,7 +389,7 @@ export function resolveCombat(g, ctx, attackers, targetPos, opts = {}) {
   const dCapt = CA_DEFENDER_CAPTURED[col].includes(dSum);
 
   // Retreats the defender can't make cost 10% per hex; major cities may ignore retreats [15.82].
-  if (retreatHexes && fort >= 1) { say('Defenders in a major city ignore the retreat result.'); retreatHexes = 0; }
+  if (retreatHexes && terr.fortified && fort >= 1) { say('Defenders in a major city ignore the retreat result.'); retreatHexes = 0; }
   let shortfall = 0;
   if (retreatHexes) {
     shortfall = retreatUnits(defenders.filter((d) => d.str > 0), attackers, retreatHexes, { dryRun: true });

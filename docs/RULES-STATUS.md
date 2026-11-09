@@ -74,3 +74,8 @@ Every column of every dice table is checked automatically to cover all 36 result
 
 ## Interface aids (not rules)
 Click-to-go names (tabs, log, notifications), find box (F), idle-unit cycling (N), notifications list (B), turn-summary pop-up, hover tooltip, minimap (M), last-seen enemy markers, Overview tab, control shading with front line (G), team-only pins/arrows (P/R/X, relayed by the server), and a session replay. Shortcut list: press ?.
+
+## Engineers and construction (rules 23-24)
+Built: fortifications (new, Level 1 or 2, and rebuilt city levels), road rebuilding, railway repair; engineer, infantry (3+ TOE) and idle-unit requirements; work counts only for an Operations Stage in which the party spends no CP, is not pinned and has no storm; Stores paid at the start. Fortifications (built or city) shift the defender's column and can be bombed; only major cities ignore retreat results.
+Stand-ins: (1) Engineer counters are not in our data yet, so each side starts with invented stand-ins (Axis: two Italian engineer battalions; Commonwealth: two engineer battalions and the SA road coy), plus the NZ railway coys and the 200th Engineer Bn from the reinforcement schedule. Send real counters and I will replace them. (2) Stores are one pool per side (300 each, +25 per Game-Turn) and a supply unit must stand in the hex.
+Not built: new railway track [24.62, 24.67], unfinished Via Balbia stretches [24.51], minefields, air-facility and repair-facility construction, hot-weather water [24.21], engineer assault bonus [23.24].

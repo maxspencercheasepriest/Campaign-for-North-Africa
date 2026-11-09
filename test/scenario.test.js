@@ -329,7 +329,7 @@ test('role-limited views: each seat gets only its own area', () => {
   const air = viewFor(g, 'axis', ['air']);
   assert.ok(air.air.squadrons.length > 0);
   assert.equal(air.supply.filter((x) => x.own).length, 0);
-  assert.ok(air.units.filter((u) => u.side === 'axis').every((u) => u.cohesion === undefined && u.elements === undefined && u.str > 0));
+  assert.ok(air.units.filter((u) => u.side === 'axis' && u.type !== 'hq').every((u) => u.cohesion === undefined && u.elements === undefined && u.str > 0));
   const log = viewFor(g, 'axis', ['logistics']);
   assert.equal(log.air, null);
   assert.ok(log.supply.some((x) => x.own && x.ammo != null));
@@ -429,7 +429,8 @@ async function bombRun(g, kind, hexKey, extra = {}) {
 
 test('bombing a road destroys it for movement until a unit rebuilds it', async () => {
   const { mapFor, gameMap } = await import('../src/server/engine.js');
-  const { repairDamage } = await import('../src/server/air.js');
+  const { buildSpots, startBuild, closeStage } = await import('../src/server/construction.js');
+  const { constructionCtx } = await import('../src/server/engine.js');
   const { stepCost } = await import('../src/shared/rules.js');
   const { facilityHex } = await import('../src/shared/air.js');
   const { distance } = await import('../src/shared/hex.js');
@@ -443,10 +444,20 @@ test('bombing a road destroys it for movement until a unit rebuilds it', async (
   assert.notEqual(stepCost(mapFor(g), A, B, { motorised: true })?.via, 'road');
   assert.ok(viewFor(g, 'axis').damage.roads.includes(edge.a));
   assert.equal(gameMap().roads.has(edge.a + '|' + edge.b) || gameMap().roads.has(edge.b + '|' + edge.a), true, 'the shared map is untouched');
-  const u = g.units.find((x) => x.side === 'axis' && x.type !== 'hq' && x.str > 0);
-  u.pos = A;
-  repairDamage(g);
+  // Only engineers (or a 3-TOE infantry unit) rebuild it, and the work needs a supply unit and Stores on the spot [24.53, 24.54].
+  const eng = g.units.find((x) => x.id === 'it-eng1');
+  eng.pos = A; eng.cpUsed = 0;
+  for (const x of g.units) if (x.side === 'cw' && Math.abs(x.pos[0] - A[0]) < 3 && Math.abs(x.pos[1] - A[1]) < 3) x.pos = [0, 0];
+  const cx = constructionCtx(g);
+  const noDump = buildSpots(g, 'axis', cx).find((sp) => sp.hex === edge.a)?.options.find((o) => o.kind === 'road');
+  assert.ok(noDump && !noDump.ok && /supply unit/.test(noDump.why));
+  g.supply.units.push({ id: 'T-eng', side: 'axis', pos: [...A], ammo: 5, fuel: 5 });
+  const stores = g.stores.axis;
+  assert.equal(startBuild(g, 'axis', { kind: 'road', hex: edge.a }, cx), null);
+  assert.ok(g.stores.axis < stores);
+  closeStage(g, cx);
   assert.equal(stepCost(mapFor(g), A, B, { motorised: true }).via, 'road');
+  assert.equal(g.projects.length, 0);
 });
 
 test('bombing a major city lowers its fortification one level per Operations Stage', async () => {
@@ -616,4 +627,48 @@ test('bombers damage ships at sea and U-boats torpedo them (house rule)', async 
   resolveFleet(g, { cw: { ships: [bb, dd].map((x) => ({ id: x.id, hex: nameOfHex(...seaHex) })) }, axis: { uboats: [{ id: u.id, hex: nameOfHex(...seaHex) }] } }, { d6: () => rolls.shift() ?? 6 });
   assert.ok(g.log.some((l) => /torpedoes Valiant/.test(l.text)));
   assert.equal(bb.gun, 3);
+});
+
+test('fortifications: three idle stages by an engineer plus infantry build a level; moving halts the work [24.4]', async () => {
+  const { buildSpots, startBuild, closeStage } = await import('../src/server/construction.js');
+  const { constructionCtx, gameMap } = await import('../src/server/engine.js');
+  const { fortLevel } = await import('../src/server/air.js');
+  const { key } = await import('../src/shared/hex.js');
+  const { hexFromName } = await import('../src/shared/hexnames.js');
+  const g = createGame({ seed: 3 });
+  const h = hexFromName('C2010');
+  gameMap().tiles[key(...h)] = { t: 'clear' };
+  const eng = g.units.find((x) => x.id === 'it-eng1'), inf = g.units.find((x) => x.id === 'it-63');
+  for (const u of [eng, inf]) { u.pos = [...h]; u.cpUsed = 0; }
+  for (const x of g.units) if (x.side === 'cw') x.pos = [0, 0];
+  g.supply.units.push({ id: 'T-f', side: 'axis', pos: [...h], ammo: 5, fuel: 5 });
+  const cx = constructionCtx(g);
+  const opt = buildSpots(g, 'axis', cx).find((s) => s.hex === key(...h)).options.find((o) => o.kind === 'fort');
+  assert.ok(opt?.ok, JSON.stringify(opt));
+  assert.equal(startBuild(g, 'axis', { kind: 'fort', hex: key(...h) }, cx), null);
+  assert.equal(g.stores.axis, 300 - 30);
+  closeStage(g, cx); closeStage(g, cx);
+  assert.equal(fortLevel(g.damage, h), 0);
+  inf.cpUsed = 3; // moved during the stage: that stage does not count
+  closeStage(g, cx);
+  assert.equal(fortLevel(g.damage, h), 0);
+  inf.cpUsed = 0;
+  closeStage(g, cx);
+  assert.equal(fortLevel(g.damage, h), 1);
+  assert.equal(viewFor(g, 'axis').damage.fort.find((f) => f.hex === key(...h)).level, 1);
+});
+
+test('a built fortification shifts the defender\'s column and can be bombed', async () => {
+  const { previewAttack, gameMap } = await import('../src/server/engine.js');
+  const { key, neighbours } = await import('../src/shared/hex.js');
+  const { hexFromName } = await import('../src/shared/hexnames.js');
+  const g = createGame({ seed: 1 });
+  const att = g.units.find((u) => u.id === 'it-63'), def = g.units.find((u) => u.id === 'cw-4ind');
+  att.pos = hexFromName('C2010'); def.pos = neighbours(...att.pos)[1];
+  for (const h of [att.pos, def.pos]) gameMap().tiles[key(...h)] = { t: 'clear' };
+  const before = previewAttack(g, 'axis', { targetId: def.id, attackerIds: [att.id] });
+  g.damage.built[key(...def.pos)] = 2;
+  const after = previewAttack(g, 'axis', { targetId: def.id, attackerIds: [att.id] });
+  assert.equal(after.fort, 2);
+  assert.ok(after.notes.some((n) => /fortification/.test(n)) && !before.notes.some((n) => /fortification/.test(n)));
 });

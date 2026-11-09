@@ -32,6 +32,9 @@ const T = {
   dePanzer: () => ['arm', 'battalion', 25, 2, [E('PzKw III', 20), E('PzKw II', 5)]],
   deAT: () => ['art', 'battalion', 25, 2, [E('47/32 AT', 12)]],
   deArty: () => ['art', 'battalion', 15, 2, [E('105/28 Gun', 12)]],
+  cwSAS: () => ['inf', 'battalion', 15, 1, [E('CW inf (h)', 9)], { sas: true }],
+  cwNZRR: () => ['hq', 'battalion', 15, 1, [], { eng: 'rr' }],
+  deEng: () => ['hq', 'battalion', 25, 2, [], { eng: 'bn' }],
   deRecce: () => ['rec', 'battalion', 35, 2, [E('PzKw II', 8)]],
 };
 
@@ -56,6 +59,7 @@ const CW = [
   [29, 3, 'cwArty', 'cw-228fa', '2/8 Australian Fld Arty', 'au'], [29, 3, 'cwArty', 'cw-2712fa', '2/7 & 2/12 Australian Fld Arty', 'au'], [29, 3, 'cwLAA', 'cw-231laa', '2/3 Australian LAA', 'au'],
   [30, 1, 'cwMG', 'cw-2mg', '2/2 Australian MG Bn', 'au'], [31, 1, 'cwLight', 'cw-1dg', '1st Royal Dragoons', 'uk'], [31, 1, 'cwLAA', 'cw-1laa', '1st LAA Regt', 'uk'],
   [31, 1, 'cwCruiser', 'cw-1armb', '1st Armoured Bde', 'uk'],
+  [20, 1, 'cwNZRR', 'cw-13nzrr', '13th NZ Railway Construction Coy', 'nz'], [32, 1, 'cwNZRR', 'cw-10nzrr', '10th NZ Railway Construction Coy', 'nz'], [47, 2, 'cwSAS', 'cw-sas', 'Special Air Service Brigade', 'uk'],
   [32, 1, 'cwInfBde', 'cw-5sa', '5th South African Bde', 'sa'], [32, 1, 'cwLight', 'cw-1ilh', '1st Imperial Light Horse', 'sa'],
   [33, 1, 'cwArty', 'cw-4fa', '4th Fld Arty Regt', 'uk'],
   [35, 1, 'cwInfBde', 'cw-14ib', '14th Infantry Bde', 'uk'], [35, 1, 'cwInfBde', 'cw-5nzb', '5th New Zealand Bde', 'nz'], [35, 1, 'cwArty', 'cw-5nzfa', '5th NZ Fld Arty Regt', 'nz'],
@@ -78,7 +82,7 @@ const AX = [
   [17, 3, 'itTank', 'it-xxim', 'XXI Medium Tank Bn', 'it'],
   [18, 1, 'itArmDiv', 'it-132', '132nd Ariete Div', 'it'],
   [21, 1, 'deRecce', 'de-3auf', '3rd Aufklarungs Bn', 'de'], [21, 1, 'deAT', 'de-39pj', '39th Panzerjaeger Bn', 'de'], [21, 1, 'itDiv', 'it-102', '102nd Trento Div', 'it'],
-  [21, 2, 'deInf', 'de-200eng', '200th Engineer Bn', 'de'], [21, 2, 'itDiv', 'it-27', '27th Brescia Div', 'it'],
+  [21, 2, 'deEng', 'de-200eng', '200th Engineer Bn', 'de'], [21, 2, 'itDiv', 'it-27', '27th Brescia Div', 'it'],
   [22, 2, 'dePanzer', 'de-i5pz', 'I/5 Panzer Bn', 'de'], [22, 2, 'itDiv', 'it-17', '17th Pavia Div', 'it'], [22, 3, 'deAT', 'de-605pj', '605th Panzerjaeger Bn', 'de'],
   [23, 1, 'deArty', 'de-i75', 'I/75 Arty Bn', 'de'],
   [24, 1, 'itDiv', 'it-25', '25th Bologna Div', 'it'], [24, 2, 'dePanzer', 'de-ii5pz', 'II/5 Panzer Bn', 'de'], [24, 2, 'deArty', 'de-529cd', '529th & 532nd CD Arty Bns', 'de'],
@@ -91,8 +95,8 @@ const ROMMEL = { turn: 20, stage: 2, location: ELAG, unit: U('de-dak', 'axis', '
 
 const build = (side, loc) => (row) => {
   const [turn, stage, key, id, name, nation] = row;
-  const [type, size, cpa, morale, elements] = T[key]();
-  return { turn, stage, location: loc, unit: U(id, side, nation, name, type, size, cpa, morale, elements, null) };
+  const [type, size, cpa, morale, elements, extra] = T[key]();
+  return { turn, stage, location: loc, unit: U(id, side, nation, name, type, size, cpa, morale, elements, null, extra) };
 };
 
 export const REINFORCEMENTS = [...CW.map(build('cw', 'cairo')), ...AX.map(build('axis', ELAG)), ROMMEL];

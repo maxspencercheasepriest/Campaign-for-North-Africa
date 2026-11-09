@@ -89,13 +89,16 @@ export const roadDestroyed = (col, roll) => col >= 0 && roll >= ROAD_T[col];
 
 // ---------- Damage to roads, railways and fortifications ----------
 // g.damage = { roads:{hexKey:turn}, rails:{hexKey:turn}, fort:{hexKey:levelsLost}, fortHit:{hexKey:'turn.stage'} }
-export const newDamage = () => ({ roads: {}, rails: {}, fort: {}, fortHit: {} });
-// Major cities are Level 2 fortifications; Cairo and Alexandria Level 3 [25.12].
-export function fortBase(hex) {
-  const loc = LOCATIONS.find((l) => l.city && l.hexes.some((h) => h[0] === hex[0] && h[1] === hex[1]));
-  return loc && /cairo|alexandria/i.test(loc.name) ? 3 : 2;
+export const newDamage = () => ({ roads: {}, rails: {}, fort: {}, fortHit: {}, built: {} });
+// Major cities are Level 2 fortifications; Cairo and Alexandria Level 3 [25.12]. Elsewhere a fortification exists only where one was built (d.built).
+const cityOf = (hex) => LOCATIONS.find((l) => l.city && l.hexes.some((h) => h[0] === hex[0] && h[1] === hex[1]));
+export const isCity = (hex) => !!cityOf(hex);
+export function fortBase(hex, d) {
+  const loc = cityOf(hex);
+  if (loc) return /cairo|alexandria/i.test(loc.name) ? 3 : 2;
+  return d?.built?.[key(...hex)] || 0;
 }
-export const fortLevel = (d, hex) => Math.max(0, fortBase(hex) - ((d?.fort || {})[key(...hex)] || 0));
+export const fortLevel = (d, hex) => Math.max(0, fortBase(hex, d) - ((d?.fort || {})[key(...hex)] || 0));
 // ---------- Port efficiency [55.12-55.18] ----------
 const PORT_MAX = { tripoli: 10, alexandria: 10, tobruk: 5, benghazi: 3 }; // every other port is 1 [55.3]
 export const portMax = (id) => PORT_MAX[id] ?? 1;
@@ -110,15 +113,6 @@ export function repairPorts(g) {
   g.portLost = {};
 }
 
-// Rebuilding stand-in (the Construction rules are not built yet): each Game-Turn, a land combat unit alone in a damaged hex puts one road, railway or fortification level right.
-export function repairDamage(g) {
-  const d = g.damage; if (!d) return;
-  const here = (k) => g.units.filter((u) => u.str > 0 && u.type !== 'hq' && u.type !== 'truck' && key(...u.pos) === k);
-  const ok = (k) => { const us = here(k); return us.length && us.every((u) => u.side === us[0].side); };
-  for (const k of Object.keys(d.roads)) if (ok(k)) delete d.roads[k];
-  for (const k of Object.keys(d.rails)) if (ok(k)) delete d.rails[k];
-  for (const k of Object.keys(d.fort)) if (ok(k)) { d.fort[k] -= 1; if (d.fort[k] <= 0) delete d.fort[k]; }
-}
 export function bombResult(table, col, roll) {
   if (col < 0) return 0;
   let best = table[0].result;
@@ -367,7 +361,7 @@ function bombTarget(f, tons, n, ctx, say) {
     say(`${tag} (d66 ${roll}): ${hit ? `the ${road ? 'road' : 'railway'} in that hex is destroyed${road ? ' and counts as a track [24.52]' : ''}.` : 'no effect.'}`);
   } else if (f.kind === 'bFC') {
     const hk = key(...hex), stamp = `${ctx.turn}.${ctx.opStage}`;
-    if (ctx.map.tiles[hk]?.t !== 'majorcity') { say(`${tag}: no fortification there to bomb (only major cities are fortified so far).`); return; }
+    if (fortBase(hex, ctx.damage) < 1) { say(`${tag}: no fortification there to bomb.`); return; }
     const lv = fortLevel(ctx.damage, hex);
     if (lv < 1) { say(`${tag}: the fortification is already at Level 0.`); return; }
     if (ctx.damage.fortHit[hk] === stamp) { say(`${tag}: only one fortification level can be destroyed per Operations Stage [41.37].`); return; }

@@ -18,7 +18,8 @@ import { createFleet } from '../shared/fleet.js';
 import { fleetArrivals, fleetEndStage, cwHasShips, axisHasBoats, validateFleetOrders, resolveFleet, navalFire, damageShips, aaAt, shipAA, available as shipAvailable } from './fleet.js';
 import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
-import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, repairPorts, portEff, portMax, newDamage, repairDamage, fortLevel, fortBase } from './air.js';
+import { fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, repairPorts, portEff, portMax, newDamage, fortLevel, fortBase } from './air.js';
+import { initConstruction, buildSpots, startBuild, cancelBuild, closeStage, buildView as constructionView, STORES_PER_TURN } from './construction.js';
 import {
   SIDES, accessFor, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
   buildMap, initialUnits, initialSupply, initialPortOwners, VISION_RANGE,
@@ -142,7 +143,14 @@ export function actingSides(g) {
   return [phasingSide(g)];
 }
 
+export function constructionCtx(g) {
+  const map = mapFor(g);
+  return { map, inEnemyZoc, weatherAt: (h) => weatherAt(g, h), log: (side, text) => log(g, side, text) };
+}
+
 function startGameTurn(g) {
+  initConstruction(g);
+  if (g.opStage >= 1) closeStage(g, constructionCtx(g));
   // I. Initiative Determination Stage [7.14]
   const onMap = (pred) => g.units.some(pred);
   const ctx = {
@@ -169,7 +177,7 @@ function startGameTurn(g) {
   g.order = null;
   g.half = null;
   returnPilots(g.air, g.turn);
-  if (g.turn > scenarioOf(g).firstTurn) { repairFacilities(g.air); repairDamage(g); awardPortPoints(g); }
+  if (g.turn > scenarioOf(g).firstTurn) { repairFacilities(g.air); awardPortPoints(g); for (const sd of SIDES) g.stores[sd] += STORES_PER_TURN; }
   setStep(g, 'convoy');
 }
 
@@ -194,6 +202,8 @@ function rollWeather(g) {
 export const weatherAt = (g, hex) => localWeather(g.weather, gameMap(), hex);
 
 function startOpStage(g, n) {
+  initConstruction(g);
+  if (g.opStage >= 1) closeStage(g, constructionCtx(g));
   g.opStage = n;
   for (const u of g.units) { u.cpUsed = 0; u.bp = 0; u.bpCol = -1; u.sandCp = 0; u.fuelPaid = false; u.reserve = 0; u.relFrom = 0; u.relCap = null; u.assaults = 0; u.resDp = false; for (const e of u.elements || []) e.airPin = 0; }
   resetMoved(g.supply);
@@ -433,7 +443,9 @@ function fleetView(g, side, seen) {
 function damageView(g) {
   const d = g.damage || newDamage();
   const ports = LOCATIONS.filter((l) => l.port && portEff(g, l.id) < portMax(l.id)).map((l) => ({ id: l.id, name: l.name, hex: l.hexes[0], eff: portEff(g, l.id), max: portMax(l.id) }));
-  return { ports, roads: Object.keys(d.roads), rails: Object.keys(d.rails), fort: Object.keys(d.fort).map((k) => ({ hex: k, level: fortLevel(d, k.split(',').map(Number)), base: fortBase(k.split(',').map(Number)) })) };
+  const hexOf = (k) => k.split(',').map(Number);
+  const fortKeys = [...new Set([...Object.keys(d.fort), ...Object.keys(d.built || {})])];
+  return { ports, roads: Object.keys(d.roads), rails: Object.keys(d.rails), fort: fortKeys.map((k) => ({ hex: k, level: fortLevel(d, hexOf(k)), base: fortBase(hexOf(k), d) })).filter((f) => f.base > 0) };
 }
 
 function resolveAirPhase(g, orders) {
@@ -599,6 +611,8 @@ export function act(g, side, a) {
   switch (a?.action) {
     case 'move': return actMove(g, side, a);
     case 'rail': return actRail(g, side, a);
+    case 'build': return startBuild(g, side, a, constructionCtx(g));
+    case 'cancelBuild': return cancelBuild(g, side, a, constructionCtx(g));
     case 'reserve': return actReserve(g, side, a);
     case 'release': return actRelease(g, side, a);
     case 'toCombat':
@@ -987,7 +1001,7 @@ export function previewAttack(g, side, a) {
   const attackers = (a.attackerIds || []).map((id) => g.units.find((x) => x.id === id && x.side === side && x.str > 0)).filter(Boolean);
   if (!attackers.length) return null;
   const map = mapFor(g);
-  const ctx = { map, fortLevel: (h) => (map.tiles[key(...h)]?.t === 'majorcity' ? fortLevel(g.damage, h) : 0) };
+  const ctx = { map, fortLevel: (h) => fortLevel(g.damage, h) };
   return previewAssault(g, ctx, attackers, target.pos, { tankRole: a.tankRole === 'antiArmour' ? 'antiArmour' : 'assault', artilleryForward: a.artilleryForward !== false });
 }
 
@@ -1069,7 +1083,7 @@ function actDefend(g, side, a = {}) {
   };
   ctx.navalFire = (sd, hexes) => navalFire(g, sd, hexes);
   ctx.navalSpent = (sh) => { sh.ship.spent = true; };
-  ctx.fortLevel = (h) => (map.tiles[key(...h)]?.t === 'majorcity' ? fortLevel(g.damage, h) : 0);
+  ctx.fortLevel = (h) => fortLevel(g.damage, h);
   ctx.retreatUnits = makeRetreat(g, { map, spendCP: (u, cp) => spendCP(g, u, cp), inEnemyZoc });
   if (!attackers.length) return null;
   const defOpts = {
@@ -1184,7 +1198,7 @@ function buildView(g, side) {
     const ammoNeed = isCombatUnit(u) ? ammoCost(u, true) : 0;
     const lacking = { needFuel: need > fuel, needAmmo: ammoNeed > ammo, ammoNeed };
     return {
-      ...u, fuelNeed: need, fuelAvail: fuel, ammoAvail: ammo, ammoNeed,
+      ...u, fuelNeed: need, fuelAvail: fuel, ammoAvail: ammo, ammoNeed, ...((g.projects || []).some((p) => p.unitIds.includes(u.id)) ? { building: true } : {}),
       ...((lacking.needFuel || lacking.needAmmo) ? { supplyNote: supplyDiagnosis(g.supply, sctx, u, lacking) } : {}),
     };
   });
@@ -1210,6 +1224,7 @@ function buildView(g, side) {
     supply,
     air: airView(g, side, seen),
     damage: damageView(g),
+    build: constructionView(g, side, constructionCtx(g), g.step === 'movecombat' && phasingSide(g) === side && !g.decision),
     fleet: fleetView(g, side, seen),
     lastAir: g.lastAir ? {
       n: g.lastAir.n, turn: g.lastAir.turn, stage: g.lastAir.stage,

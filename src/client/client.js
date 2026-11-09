@@ -389,9 +389,20 @@ function moveCombatPanel() {
     if (rel.length) html += `<h4>Reserve Release Segment</h4>${rel.map((u) => `<div class="btnrow"><button data-release="${u.id}">Release ${esc(u.name)}</button></div>`).join('')}<p class="help">Released from Reserve I: may not exceed its CPA, one assault. From Reserve II: half CPA, one assault, +1 disorganization point if it assaults [18.23-18.24].</p>`;
     html += `<div class="btnrow"><button class="act" data-act="nextSegment">New movement segment</button></div>`;
   }
+  html += constructionPanel();
   html += obligationList();
   html += `<button class="primary act" data-act="endPhase">End Movement &amp; Combat Phase</button>`;
   return html;
+}
+
+const KIND_WORD = { fort: 'fortification', road: 'road', rail: 'railway' };
+function constructionPanel() {
+  const b = S.game.build;
+  if (!b) return '';
+  const projects = b.projects.map((p) => `<li>${goLink(`${KIND_WORD[p.kind]} at ${hexLabel(key(...p.pos))}`, p.pos)}: stage ${p.progress}/${p.needed} done ${S.canAct ? `<button data-cancel-build="${p.id}">Call off</button>` : ''}</li>`).join('');
+  const spots = b.spots.map((sp) => `<div class="attack"><b>${goLink(hexLabel(sp.hex), sp.pos)}</b>${sp.options.map((o) => `<div>${esc(o.label)} <span class="muted">(${o.cost} Stores${o.stages > 1 ? `, ${o.stages} idle stages` : ', done this stage'})</span> ${o.ok ? `<button data-build="${o.kind}" data-build-hex="${sp.hex}">Start</button>` : `<span class="bad">${esc(o.why)}</span>`}</div>`).join('')}</div>`).join('');
+  if (!projects && !spots) return `<p class="help">Construction: ${b.stores} Stores in the pool. Engineers with an idle infantry unit can build or rebuild fortifications; engineers or infantry rebuild bombed roads, engineers rebuild railways [24.0].</p>`;
+  return `<h4>Construction <span class="muted">(${b.stores} Stores in the pool)</span></h4>${projects ? `<ul class="orders">${projects}</ul>` : ''}${spots}<p class="help">Work counts only if the units spend no Capability Points for the whole Operations Stage, are not pinned and there is no storm [24.12]. A supply unit must be in the hex to hold the Stores.</p>`;
 }
 
 function unitCard(u) {
@@ -405,6 +416,7 @@ function unitCard(u) {
     CPA ${u.cpa} · used ${fmtCP(u.cpUsed)}${u.cpa <= 10 ? ` (foot: max ${u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT})` : ''} · cohesion <b class="${u.cohesion < 0 ? 'bad' : ''}">${u.cohesion}</b><br>
     Morale ${u.morale > 0 ? '+' : ''}${u.morale} · TOE ${u.str}/${u.maxStr}${u.fuelNeed ? ` · fuel ${Math.floor(u.fuelAvail)}/${u.fuelNeed}` : ''} · ammo in reach ${Math.floor(u.ammoAvail)}${u.ammoNeed ? `/${u.ammoNeed} to attack` : ""}${u.motorised ? ` · breakdown pts ${fmtCP(u.bp)}` : ''}
     <br><span class="muted">${(u.elements || []).map((e) => `${e.toe}× ${esc(e.w)}`).join(' · ')}</span>
+    ${u.eng ? `<br><b>${{ bn: 'Engineer battalion', co: 'Engineer company', rr: 'Railway construction', road: 'Road construction' }[u.eng]}</b>${u.building ? ' · <span class="ok">at work on a project</span>' : ''}` : ''}
     ${u.supplyNote ? `<br><span class="bad">${esc(u.supplyNote)}</span>` : ''}
     ${u.reserve ? `<br><b>In Reserve ${u.reserve === 1 ? 'I (may move one hex)' : 'II (may not move)'}.</b>` : u.relFrom ? `<br><span class="muted">Released from Reserve ${u.relFrom === 1 ? 'I' : 'II'}: max ${u.relCap} CP, one assault.</span>` : ''}
     ${frozen ? '<br><span class="bad">Cannot move again this phase.</span>' : moved ? '<br><span class="muted">Already moved this segment.</span>' : ''}</div>`;
@@ -603,6 +615,8 @@ function wireOrders(el) {
     send({ type: 'action', action: b.dataset.act });
   }));
   if ($('railBtn')) $('railBtn').onclick = () => { railMode = !railMode; renderOrders(); drawMap(); };
+  el.querySelectorAll('[data-build]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'build', kind: b.dataset.build, hex: b.dataset.buildHex })));
+  el.querySelectorAll('[data-cancel-build]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'cancelBuild', projectId: +b.dataset.cancelBuild })));
   el.querySelectorAll('[data-reserve]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'reserve', unitIds: [b.dataset.reserve], off: b.dataset.off === '1' })));
   el.querySelectorAll('[data-release]').forEach((b) => (b.onclick = () => send({ type: 'action', action: 'release', unitIds: [b.dataset.release] })));
   el.querySelectorAll('[data-attack]').forEach((b) => (b.onclick = () => {
@@ -658,7 +672,7 @@ function renderSupply() {
     : g.supplyTotals ? `<h3>Supplies</h3><p>${g.supplyTotals.units} supply units in the field, holding <b>${n(g.supplyTotals.ammo)}</b> Ammo and <b>${n(g.supplyTotals.fuel)}</b> Fuel in all. The Logistics and Rear Area Commanders have the detail.</p>` : '';
   const box = acc.convoys >= 1 && g.box != null && mySide() === 'axis' ? `<p>Waiting in Tripoli: <b>${g.box}</b> supply unit${g.box === 1 ? '' : 's'}.</p>` : '';
   el.innerHTML = `${formations}${dumps}${box}
-    <p>Prisoners held: <b>${g.prisoners?.[mySide()] ?? 0}</b> TOE points.</p>
+    <p>Prisoners held: <b>${g.prisoners?.[mySide()] ?? 0}</b> TOE points.${g.build ? ` Construction Stores in the pool: <b>${g.build.stores}</b>.` : ''}</p>
     ${victoryHtml(v)}
     ${portRewardsHtml()}
     <p class="help">Units draw Fuel (once per Operations Stage) and Ammunition (at combat) from supply units within half their CPA [32.2]. Spending past the allowance costs cohesion. A stage spent resting restores up to 5 cohesion (never above 0). At −26 a unit can't move or fight.</p>`;
@@ -1121,13 +1135,14 @@ function drawCounter(u, i, n) {
   if (u.type === 'inf' || u.type === 'mot') { ctx.moveTo(bx, by); ctx.lineTo(bx + bw, by + bh); ctx.moveTo(bx + bw, by); ctx.lineTo(bx, by + bh); }
   if (u.type === 'arm' || u.type === 'mot') { ctx.ellipse(x, by + bh / 2, bw * 0.32, bh * 0.3, 0, 0, Math.PI * 2); }
   if (u.type === 'hq') { ctx.moveTo(bx, by + bh); ctx.lineTo(bx, by + bh * 1.8); }
+  if (u.eng) { ctx.moveTo(bx + bw * 0.2, by + bh * 0.2); ctx.lineTo(bx + bw * 0.2, by + bh * 0.8); ctx.moveTo(bx + bw * 0.2, by + bh * 0.5); ctx.lineTo(bx + bw * 0.8, by + bh * 0.5); ctx.moveTo(bx + bw * 0.8, by + bh * 0.2); ctx.lineTo(bx + bw * 0.8, by + bh * 0.8); }
   ctx.stroke();
   // Size marks above the box: XX division, X brigade, II battalion
   const mark = { division: 'XX', brigade: 'X', battalion: 'II' }[u.size] || '';
   ctx.fillStyle = '#111'; ctx.font = `bold ${Math.max(6, s * 0.28)}px sans-serif`; ctx.textAlign = 'center';
   ctx.fillText(mark, x, by - 1);
   ctx.font = `bold ${Math.max(8, s * 0.4)}px "Courier New", monospace`;
-  ctx.fillText(String(u.str), x, y + h * 0.42);
+  ctx.fillText(u.type === 'hq' && !u.str ? (u.eng ? 'E' : 'HQ') : String(u.str), x, y + h * 0.42);
   // Cohesion warning pip
   if (u.side === mySide() && u.cohesion < 0) { ctx.fillStyle = u.cohesion <= -10 ? '#a3241a' : '#c98a1e'; ctx.fillRect(x + w / 2 - s * 0.22, y - h / 2, s * 0.22, s * 0.22); }
   ctx.globalAlpha = 1;

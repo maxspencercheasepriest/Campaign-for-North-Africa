@@ -146,6 +146,12 @@ export function initialUnits() {
     U('it-4cc', 'axis', 'it', '4th Blackshirt Div', 'inf', 'division', 10, -1, itDiv(), at('C4507')),
     U('it-bgar', 'axis', 'it', 'Bardia Garrison', 'inf', 'brigade', 10, -3, [E('IT inf (u)', 14), E('75/27 Gun', 3)], at('C4321')),
     U('it-tgar', 'axis', 'it', 'Tobruk Garrison', 'inf', 'brigade', 10, -3, [E('IT inf (u)', 14), E('75/27 Gun', 3), E('47/32 AT', 2)], at('C4807')),
+    // Engineer counters are NOT in the data we have yet: these stand-ins give each side the capability of rules 23-24 (flagged in docs/RULES-STATUS.md).
+    U('it-eng1', 'axis', 'it', 'Engineer Bn 1 (Genio)', 'hq', 'battalion', 10, -1, [], at('C4807'), { eng: 'bn' }),
+    U('it-eng2', 'axis', 'it', 'Engineer Bn 2 (Genio)', 'hq', 'battalion', 10, -1, [], at('C4321'), { eng: 'bn' }),
+    U('cw-eng1', 'cw', 'uk', 'Engineer Bn 1', 'hq', 'battalion', 15, 1, [], at('D3714'), { eng: 'bn' }),
+    U('cw-eng2', 'cw', 'uk', 'Engineer Bn 2', 'hq', 'battalion', 15, 1, [], at('D3612'), { eng: 'bn' }),
+    U('cw-saroad', 'cw', 'sa', '1st SA Road Construction Coy', 'hq', 'battalion', 15, 1, [], at('D3714'), { eng: 'road' }),
     U('cw-7spt', 'cw', 'uk', '7th Support Group', 'mot', 'brigade', 15, 1, [E('CW inf (h)', 10), E('18/25-pounder Gun', 6), E('2-pounder AT', 4)], at('C3922')),
     U('cw-sg', 'cw', 'uk', '2nd Scots Guards', 'inf', 'battalion', 10, 1, [E('CW inf (h)', 5), E('25-pounder Gun', 4)], at('C4131')),
     U('cw-7arm', 'cw', 'uk', '7th Armoured Div', 'arm', 'division', 25, 1, [E('Mark VI Light', 10), E('A9 Cruiser', 3), E('A10 Cruiser', 3), E('A13 Cruiser', 4)], at('D3612')),
