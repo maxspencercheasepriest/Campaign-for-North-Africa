@@ -150,3 +150,5 @@ ul.sum { margin: 0; padding-left: 18px; max-width: 520px; font-size: 13px; }
 .oddsbox .good, .good { color: #1d6b2f; } .oddsbox .bad { color: #a3241a; }
 .meter { position: relative; height: 8px; margin: 5px 0; background: linear-gradient(90deg, #b3261e, #d8c26a 50%, #2f7d3a); border-radius: 4px; }
 .meter i { position: absolute; top: -3px; width: 4px; height: 14px; background: #111; transform: translateX(-2px); }
+.cargo { flex-basis: 100%; font-size: 12px; }
+.cargo label { display: block; margin: 1px 0 1px 8px; }

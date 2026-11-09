@@ -6,6 +6,8 @@ import { distance, key, parseKey } from '../shared/hex.js';
 import { hexFromName, nameOfHex } from '../shared/hexnames.js';
 import { syncStr } from './combat.js';
 import { LOCATIONS } from '../shared/locations.js';
+import { liftPlanes, cargoAtBase, checkCapacity } from './airlift.js';
+import { supplyStackLimit } from './supply.js';
 
 const other = (s) => (s === 'axis' ? 'cw' : 'axis');
 const sideName = (s) => (s === 'axis' ? 'Axis' : 'Commonwealth');
@@ -216,7 +218,7 @@ export function returnPilots(air, turn) {
 }
 
 // ---------- Orders ----------
-export const MISSION_KINDS = { transfer: 'Transfer to another base', capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility', bRD: 'Bomb a road', bRR: 'Bomb a railway', bFC: 'Bomb a fortification', bTC: 'Bomb trucks', bPT: 'Bomb a port', bCF: 'Bomb ships' };
+export const MISSION_KINDS = { transfer: 'Transfer to another base', airlift: 'Fly cargo to a base and return', capO: 'Offensive patrol', capD: 'Defensive patrol', strafe: 'Strafing', scramble: 'Scramble (stand by)', bCU: 'Bomb troops', bSD: 'Bomb a supply dump', bAF: 'Bomb an air facility', bRD: 'Bomb a road', bRR: 'Bomb a railway', bFC: 'Bomb a fortification', bTC: 'Bomb trucks', bPT: 'Bomb a port', bCF: 'Bomb ships' };
 const BOMB_KINDS = ['bCU', 'bSD', 'bAF', 'bRD', 'bRR', 'bFC', 'bTC', 'bPT', 'bCF'];
 export const isBombMission = (k) => BOMB_KINDS.includes(k);
 
@@ -251,6 +253,34 @@ export function transferOptions(g, sq) {
     .filter((f) => f.d <= range).sort((a, b) => a.d - b.d);
 }
 
+// Cargo flights [42.32a]: the planes land at a friendly airfield or strip within their normal range and fly home again.
+export function liftOptions(g, sq) {
+  const here = g.air.facilities.find((f) => f.id === sq.facility), from = here && facilityHex(here), pl = liftPlanes(sq);
+  if (!from || !pl.length) return [];
+  const range = Math.min(...pl.map((p) => planeInfo(p).range));
+  return g.air.facilities.filter((f) => f.owner === sq.side && f.id !== sq.facility && f.hex && !f.off && (f.kind === 'airfield' || f.kind === 'strip'))
+    .map((f) => ({ id: f.id, name: f.name, kind: f.kind, hex: f.hex, d: distance(from, facilityHex(f)) })).filter((f) => f.d <= range).sort((a, b) => a.d - b.d);
+}
+export function cargoView(g, sq) {
+  const here = g.air.facilities.find((f) => f.id === sq.facility), pl = liftPlanes(sq);
+  return { lift: pl.length, ...cargoAtBase(g, sq, here && facilityHex(here)) };
+}
+// Group the cargo missions of one side by base, destination and kind: their planes pool [47.35 "any thirty planes"].
+function liftGroups(g, missions) {
+  const groups = new Map();
+  for (const m of missions || []) {
+    if (m.kind !== 'transfer' && m.kind !== 'airlift') continue;
+    const sq = g.air.squadrons.find((q) => q.id === m.sq);
+    if (!sq) continue;
+    const k = `${sq.facility}>${m.to}>${m.kind}`;
+    if (!groups.has(k)) groups.set(k, { kind: m.kind, to: m.to, from: sq.facility, sqs: [], cargo: { units: new Set(), supply: new Set() } });
+    const gr = groups.get(k); gr.sqs.push(sq);
+    for (const id of m.cargo?.units || []) gr.cargo.units.add(id);
+    for (const id of m.cargo?.supply || []) gr.cargo.supply.add(id);
+  }
+  return [...groups.values()].map((gr) => ({ ...gr, cargo: { units: [...gr.cargo.units], supply: [...gr.cargo.supply] } }));
+}
+
 export function validateAirOrders(g, side, o, map) {
   if (o.missions != null && !Array.isArray(o.missions)) return 'Missions must be a list.';
   const used = new Set();
@@ -264,6 +294,11 @@ export function validateAirOrders(g, side, o, map) {
       if (!transferOptions(g, sq).some((f) => f.id === m.to)) return `${sq.name}: choose a friendly base with room that is within the squadron's transfer range.`;
       continue;
     }
+    if (m.kind === 'airlift') {
+      if (!liftOptions(g, sq).some((f) => f.id === m.to)) return `${sq.name}: choose a friendly airfield or strip within the transport planes' range.`;
+      if (!(m.cargo?.units?.length || m.cargo?.supply?.length)) return `${sq.name}: tick something to carry.`;
+      continue;
+    }
     if (sq.kind === 'fighter' && isBombMission(m.kind)) return `${sq.name} is a fighter squadron; it cannot fly bombing missions.`;
     if (sq.kind === 'bomber' && !isBombMission(m.kind)) return `${sq.name} is a bomber squadron; give it a bombing mission.`;
     if (sq.kind !== 'fighter' && sq.kind !== 'bomber') return `${sq.name}: only fighter and bomber missions are in the game so far.`;
@@ -271,6 +306,14 @@ export function validateAirOrders(g, side, o, map) {
     const hex = typeof m.hex === 'string' ? hexFromName(m.hex) : null;
     if (m.kind === 'bCF' && hex && map.tiles[key(...hex)]) continue; // ships can be bombed at sea [30.32]
     if (!hex || !map.tiles[key(...hex)] || map.tiles[key(...hex)].t === 'sea') return `${sq.name}: give a land hex such as C4807 for the target.`;
+  }
+  for (const gr of liftGroups(g, o.missions)) {
+    if (!gr.cargo.units.length && !gr.cargo.supply.length) continue;
+    const base = g.air.facilities.find((f) => f.id === gr.from), bh = base && facilityHex(base);
+    const atBase = cargoAtBase(g, gr.sqs[0], bh);
+    if (gr.cargo.units.some((id) => !atBase.units.some((u) => u.id === id)) || gr.cargo.supply.some((id) => !atBase.supply.some((x) => x.id === id))) return 'Cargo must start the stage in the hex with the transport planes [42.32].';
+    const err = checkCapacity(g, side, gr.sqs.flatMap(liftPlanes), gr.cargo);
+    if (err) return err;
   }
   return null;
 }
@@ -427,7 +470,7 @@ function bombTarget(f, tons, n, ctx, say) {
 function transferSquadron(air, sq, toId, ctx) {
   const from = air.facilities.find((f) => f.id === sq.facility), to = air.facilities.find((f) => f.id === toId);
   const fromHex = from && facilityHex(from), toHex = to && to.hex && !to.off && facilityHex(to);
-  const fail = (why) => ctx.log(sq.side, `${sq.name} could not transfer to ${to?.name || toId}: ${why}.`);
+  const fail = (why) => { ctx.log(sq.side, `${sq.name} could not transfer to ${to?.name || toId}: ${why}.`); return false; };
   if (!fromHex || !toHex || to.owner !== sq.side) return fail('no such friendly base');
   if (to.used >= to.cap) return fail('the base has no room');
   if (distance(fromHex, toHex) > transferRange(sq)) return fail('out of range');
@@ -435,12 +478,57 @@ function transferSquadron(air, sq, toId, ctx) {
   if (sandOrRain(ctx, fromHex) || sandOrRain(ctx, toHex)) return fail('bad weather');
   from.used = Math.max(0, from.used - 1); to.used += 1; sq.facility = to.id;
   ctx.log(sq.side, `${sq.name} transfers from ${from.name} to ${to.name}.`);
+  return true;
+}
+
+// Transfers and cargo flights run first, side by side, before any combat flights.
+function runLifts(air, orders, ctx) {
+  const g = ctx.game;
+  for (const side of ['axis', 'cw']) {
+    for (const gr of liftGroups(g, orders[side]?.missions)) {
+      const from = air.facilities.find((f) => f.id === gr.from), to = air.facilities.find((f) => f.id === gr.to);
+      const hasCargo = gr.cargo.units.length || gr.cargo.supply.length;
+      let flown = gr.sqs;
+      if (gr.kind === 'transfer') flown = gr.sqs.filter((sq) => transferSquadron(air, sq, gr.to, ctx));
+      if (!hasCargo || !flown.length) continue;
+      const say = (t) => ctx.log(side, t);
+      const fromHex = from && facilityHex(from), toHex = to && to.hex && !to.off && facilityHex(to);
+      const planes = flown.flatMap(liftPlanes);
+      const stop = (why) => say(`Cargo flight from ${from?.name} to ${to?.name} could not go: ${why}.`);
+      if (!fromHex || !toHex || to.owner !== side) { stop('no such friendly base'); continue; }
+      if (gr.kind === 'airlift') {
+        if (baseBlocked(gr.sqs[0], fromHex, ctx)) { stop('enemy troops beside the base'); continue; }
+        if (sandOrRain(ctx, fromHex) || sandOrRain(ctx, toHex)) { stop('bad weather'); continue; }
+        if (planes.length && distance(fromHex, toHex) > Math.min(...planes.map((p) => planeInfo(p).range))) { stop('out of range'); continue; }
+      }
+      const err = checkCapacity(g, side, planes, gr.cargo);
+      if (err) { stop(err); continue; }
+      if (ctx.units.some((u) => u.side !== side && u.str > 0 && u.pos[0] === toHex[0] && u.pos[1] === toHex[1])) { stop('enemy troops hold the base'); continue; }
+      const stage = `${ctx.turn}.${ctx.opStage}`;
+      for (const id of gr.cargo.units) {
+        const u = g.units.find((x) => x.id === id);
+        if (!u || u.pos[0] !== fromHex[0] || u.pos[1] !== fromHex[1]) continue;
+        if (!ctx.canStack(u, toHex)) { say(`${u.name} could not be landed at ${to.name}: stacking limit.`); continue; }
+        u.pos = [...toHex]; u.cpUsed = Math.max(u.cpUsed || 0, u.cpa); u.airlifted = stage; // may not voluntarily move or attack [42.34]
+        say(`${u.name} (${u.str} TOE points) is flown to ${to.name}.`);
+      }
+      for (const id of gr.cargo.supply) {
+        const sup = g.supply.units.find((x) => x.id === id);
+        if (!sup || sup.pos[0] !== fromHex[0] || sup.pos[1] !== fromHex[1]) continue;
+        if (ctx.supplyUnitsAt(toHex, side).length >= supplyStackLimit(ctx.map, toHex)) { say(`A supply unit could not be landed at ${to.name}: no room.`); continue; }
+        sup.pos = [...toHex]; sup.moved = true; // usable once distributed, not straight off the plane [42.35]
+        say(`A supply unit (${sup.ammo} Ammo, ${sup.fuel} Fuel) is flown to ${to.name}.`);
+      }
+      for (const p of planes) { p.ready = false; p.fueled = false; p.armed = false; } // transport planes need refitting [42.36]
+    }
+  }
 }
 
 export function resolveAir(g, orders, ctx) {
   const air = g.air;
   ctx.air = air;
   const say = (text) => ctx.log('all', text);
+  runLifts(air, orders, ctx);
   // 1. Deploy flights.
   const flights = []; // { sq, side, kind, hex, planes:[{sq,p,side}] }
   const grounded = [];
@@ -449,7 +537,7 @@ export function resolveAir(g, orders, ctx) {
     for (const m of orders[side]?.missions || []) {
       const sq = air.squadrons.find((s) => s.id === m.sq);
       if (!sq) continue;
-      if (m.kind === 'transfer') { transferSquadron(air, sq, m.to, ctx); continue; }
+      if (m.kind === 'transfer' || m.kind === 'airlift') continue; // done above
       if (m.kind === 'scramble') { standby.push(sq); continue; }
       const target = hexFromName(m.hex);
       const fl = eligiblePlanes(sq, m.kind, target, ctx);

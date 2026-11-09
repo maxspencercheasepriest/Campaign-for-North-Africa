@@ -133,3 +133,33 @@ test('air transfer moves a squadron to a friendly base with room, updates occupa
   assert.ok(g.log.some((l) => /transfer/.test(l.text)));
   if (sq.facility === dest.id) { assert.equal(from.used, fu - 1); assert.equal(to.used, tu + 1); }
 });
+
+test('airlift flies a supply unit and infantry to another airfield, then the planes need refitting [42.3, 47.35]', async () => {
+  const { facilityHex } = await import('../src/shared/air.js');
+  const { liftOptions, cargoView } = await import('../src/server/air.js');
+  const g = createGame({ seed: 2, air: 'on' });
+  const sq = g.air.squadrons.find((q) => q.side === 'axis' && cargoView(g, q).lift > 0 && liftOptions(g, q).length);
+  assert.ok(sq, 'an axis transport squadron with a destination');
+  const dest = liftOptions(g, sq)[0], fac = g.air.facilities.find((f) => f.id === sq.facility), toHex = facilityHex(g.air.facilities.find((f) => f.id === dest.id));
+  // Give the squadron plenty of planes and a small supply unit and a small infantry unit at its base.
+  for (const p of sq.planes) { p.ready = true; p.fueled = true; }
+  while (sq.planes.length < 36) sq.planes.push({ ...sq.planes[0] });
+  const base = facilityHex(fac);
+  const su = { id: 'suX', side: 'axis', pos: [...base], ammo: 4, fuel: 10, mp: 30 }; g.supply.units.push(su);
+  const inf = structuredClone(g.units.find((u) => u.id === 'it-1cc'));
+  Object.assign(inf, { id: 'ax-test', pos: [...base], str: 3, cpUsed: 0 }); g.units.push(inf);
+  submitOrders(g, 'axis', {}); submitOrders(g, 'cw', {}); submitOrders(g, 'axis', { goFirst: false });
+  assert.equal(g.step, 'air');
+  const tooMany = submitOrders(g, 'axis', { missions: [{ sq: sq.id, kind: 'airlift', to: dest.id, cargo: { units: ['it-1cc'], supply: [] } }] });
+  assert.match(String(tooMany), /start|carry|TOE|only/i);
+  const err = submitOrders(g, 'axis', { missions: [{ sq: sq.id, kind: 'airlift', to: dest.id, cargo: { units: ['ax-test'], supply: ['suX'] } }] });
+  assert.equal(err || null, null);
+  submitOrders(g, 'cw', { missions: [] });
+  assert.ok(g.log.some((l) => /flown|Cargo flight/.test(l.text)));
+  assert.deepEqual(su.pos, toHex);
+  {
+    assert.deepEqual(inf.pos, toHex);
+    assert.ok(inf.cpUsed >= inf.cpa);
+    assert.ok(sq.planes.every((p) => !p.ready || !p.fueled) || sq.planes.length > 30);
+  }
+});

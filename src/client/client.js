@@ -521,6 +521,15 @@ function obligationList() {
   }).join('')}</ul>`;
 }
 
+// Tick whole units and supply units at the squadron's base to carry along [42.3, 47.35].
+function cargoPicker(q, m) {
+  const c = q.cargo;
+  if (!c || !c.lift || !(c.units.length || c.supply.length)) return '';
+  const on = (kind, id) => (m.cargo?.[kind] || []).includes(id) ? 'checked' : '';
+  return `<div class="cargo muted">${c.lift} transport planes ready.${c.units.map((u) => `<label><input type="checkbox" data-cargo="units" data-id="${esc(u.id)}" data-sq="${q.id}" ${on('units', u.id)}> ${esc(u.name)} (${u.str} TOE)</label>`).join('')}
+    ${c.supply.map((x) => `<label><input type="checkbox" data-cargo="supply" data-id="${esc(x.id)}" data-sq="${q.id}" ${on('supply', x.id)}> Supply unit (${x.ammo} Ammo, ${x.fuel} Fuel)</label>`).join('')}</div>`;
+}
+
 function airForm() {
   draft.missions ||= [];
   const sqs = S.game.air?.squadrons || [];
@@ -530,6 +539,7 @@ function airForm() {
     return `<li><b>${esc(q.name)}</b> <span class="muted">at ${esc(q.facility)}: ${q.fueled} fuelled, ${q.armed} armed of ${q.ready} ready</span><br>
       <select data-am="kind" data-sq="${q.id}"><option value="">Stay on the ground</option>
         ${(q.moveTo || []).length ? `<option value="transfer" ${m.kind === 'transfer' ? 'selected' : ''}>Transfer to another base…</option>` : ''}
+        ${(q.liftTo || []).length && q.cargo?.lift ? `<option value="airlift" ${m.kind === 'airlift' ? 'selected' : ''}>Fly cargo to a base and return…</option>` : ''}
         ${q.kind !== 'bomber' && q.kind !== 'fighter' ? '' : q.kind === 'bomber' ? `<option value="bCU" ${m.kind === 'bCU' ? 'selected' : ''}>Bomb troops in…</option>
         <option value="bSD" ${m.kind === 'bSD' ? 'selected' : ''}>Bomb a supply dump in…</option>
         <option value="bAF" ${m.kind === 'bAF' ? 'selected' : ''}>Bomb an air facility in…</option>
@@ -542,8 +552,8 @@ function airForm() {
         <option value="capO" ${m.kind === 'capO' ? 'selected' : ''}>Offensive patrol over…</option>
         <option value="capD" ${m.kind === 'capD' ? 'selected' : ''}>Defensive patrol over…</option>
         <option value="strafe" ${m.kind === 'strafe' ? 'selected' : ''}>Strafe enemy troops in…</option>`}</select>
-      ${m.kind === 'transfer'
-        ? `<select data-am="to" data-sq="${q.id}">${(q.moveTo || []).map((f) => `<option value="${esc(f.id)}" ${m.to === f.id ? 'selected' : ''}>${esc(f.name)} (${esc(f.hex)}, ${f.d} hexes)</option>`).join('')}</select>`
+      ${m.kind === 'transfer' || m.kind === 'airlift'
+        ? `<select data-am="to" data-sq="${q.id}">${(m.kind === 'airlift' ? q.liftTo : q.moveTo || []).map((f) => `<option value="${esc(f.id)}" ${m.to === f.id ? 'selected' : ''}>${esc(f.name)} (${esc(f.hex)}, ${f.d} hexes)</option>`).join('')}</select>${cargoPicker(q, m)}`
         : q.kind === 'fighter' || q.kind === 'bomber' ? `<input data-am="hex" data-sq="${q.id}" size="6" placeholder="C4807" value="${esc(m.hex || '')}">` : ''}</li>`;
   }).join('');
   const st = S.game.air?.stock;
@@ -597,12 +607,21 @@ function wireOrders(el) {
     let m = draft.missions.find((x) => x.sq === i.dataset.sq);
     if (!m) { m = { sq: i.dataset.sq, kind: '', hex: '' }; draft.missions.push(m); }
     m[i.dataset.am] = i.value.trim();
-    if (i.dataset.am === 'kind' && m.kind === 'transfer') {
+    if (i.dataset.am === 'kind' && (m.kind === 'transfer' || m.kind === 'airlift')) {
       const q = (S.game.air?.squadrons || []).find((x) => x.id === m.sq);
-      m.to = q?.moveTo?.[0]?.id || '';
+      m.to = (m.kind === 'airlift' ? q?.liftTo : q?.moveTo)?.[0]?.id || '';
+      m.cargo = { units: [], supply: [] };
     }
     draft.missions = draft.missions.filter((x) => x.kind);
     if (i.dataset.am === 'kind') renderOrders();
+  }));
+  el.querySelectorAll('[data-cargo]').forEach((i) => (i.onchange = () => {
+    const m = (draft.missions || []).find((x) => x.sq === i.dataset.sq);
+    if (!m) return;
+    m.cargo ||= { units: [], supply: [] };
+    const list = m.cargo[i.dataset.cargo].filter((id) => id !== i.dataset.id);
+    if (i.checked) list.push(i.dataset.id);
+    m.cargo[i.dataset.cargo] = list;
   }));
   el.querySelectorAll('[data-cv]').forEach((i) => (i.onchange = () => {
     const k = i.dataset.cv, c = draft.convoys[+i.dataset.i];

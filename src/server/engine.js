@@ -18,7 +18,7 @@ import { createFleet } from '../shared/fleet.js';
 import { fleetArrivals, fleetEndStage, cwHasShips, axisHasBoats, validateFleetOrders, resolveFleet, navalFire, damageShips, aaAt, shipAA, available as shipAvailable } from './fleet.js';
 import { createAir, summariseSquadron, facilityHex } from '../shared/air.js';
 import { key, parseKey, distance, neighbours } from '../shared/hex.js';
-import { transferOptions, fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, repairPorts, portEff, portMax, newDamage, fortLevel, fortBase } from './air.js';
+import { transferOptions, liftOptions, cargoView, fuelAndArm, validateAirOrders, autoAirOrders, resolveAir, returnPilots, repairFacilities, repairPorts, portEff, portMax, newDamage, fortLevel, fortBase } from './air.js';
 import { initConstruction, buildSpots, startBuild, cancelBuild, closeStage, buildView as constructionView, STORES_PER_TURN } from './construction.js';
 import {
   SIDES, accessFor, PORTS, LOCATIONS, MAP_COLS, MAP_ROWS, scenarioById,
@@ -457,6 +457,7 @@ function resolveAirPhase(g, orders) {
     weatherAt: (hex) => weatherAt(g, hex),
     drawAmmo: (u, n) => draw(g.supply, supplyCtx(g, u.side), u, 'ammo', n),
     supplyUnitsAt: (hex, side) => g.supply.units.filter((x) => x.side === side && x.pos[0] === hex[0] && x.pos[1] === hex[1]),
+    canStack: (u, h) => hexSP(unitsAt(g, h)) + (STACKING_POINTS[u.size] ?? 0) <= stackingLimit(gameMap(), h),
     supplyAt: (hex, side) => g.supply.units.some((x) => x.side === side && x.pos[0] === hex[0] && x.pos[1] === hex[1]),
   };
   resolveAir(g, orders, ctx);
@@ -718,6 +719,7 @@ function actMove(g, side, a) {
     if (inEnemyZoc(g, u, a.path[0])) return `${u.name} is in Reserve and may not enter an enemy-controlled hex [18.22].`;
     plan.cp = 0; plan.bp = 0; plan.sandCp = 0;
   }
+  if (u.airlifted === `${g.turn}.${g.opStage}`) return `${u.name} was flown in this stage and may not voluntarily move [42.34].`;
   if (u.relCap != null && u.cpUsed + plan.cp > u.relCap) return `${u.name} was released from Reserve ${u.relFrom === 1 ? 'I' : 'II'} and may not voluntarily spend more than ${u.relCap} CP this stage [18.23, 18.24].`;
   if (u.cpa <= 10 && u.cpUsed + plan.cp > u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT) {
     return `${u.name} is on foot and may not voluntarily spend more than ${u.cpa * NON_MOTORISED_VOLUNTARY_LIMIT} CP this stage [8.17].`;
@@ -1048,6 +1050,7 @@ function actAttack(g, side, a) {
   for (const u of attackers) {
     if (distance(u.pos, targetPos) !== 1) return `${u.name} is not adjacent to ${target.name}.`;
     if (collapsed(u)) return `${u.name} is too disorganised to attack.`;
+    if (u.airlifted === `${g.turn}.${g.opStage}`) return `${u.name} was flown in this stage and may not attack [42.34].`;
     if (u.reserve) return `${u.name} is in Reserve and cannot attack until released [18.2].`;
     if (u.relFrom && (u.assaults || 0) >= 1) return `${u.name} came out of Reserve and may make only one offensive assault this Operations Stage [18.23, 18.24].`;
     if (!isCombatUnit(u)) return `${u.name} is not a combat unit.`;
@@ -1200,7 +1203,7 @@ function airView(g, side, seen) {
   const fac = (f) => ({ id: f.id, name: f.name, kind: f.kind, owner: f.owner, cap: f.cap, used: f.owner === side ? f.used : null, hex: f.hex, off: !!f.off, own: f.owner === side });
   return {
     facilities: g.air.facilities.filter((f) => f.owner === side || (f.hex && seen(facilityHex(f)))).map(fac),
-    squadrons: g.air.squadrons.filter((s) => s.side === side).map((s) => ({ ...summariseSquadron(s), moveTo: transferOptions(g, s) })),
+    squadrons: g.air.squadrons.filter((s) => s.side === side).map((s) => ({ ...summariseSquadron(s), moveTo: transferOptions(g, s), liftTo: liftOptions(g, s), cargo: cargoView(g, s) })),
     pilots: g.air.pilots[side], sgsu: g.air.sgsu[side], stock: g.air.stock?.[side] || null,
   };
 }
